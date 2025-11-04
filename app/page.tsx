@@ -29,7 +29,7 @@ export default function Home() {
           <div style={{ width: "34%", minWidth: 220, display: "flex", flexDirection: "column", gap: 20 }}>
             <Rectangle
               width="100%"
-              height={220}
+              height={300}
               color="#0e1116"
               radius={12}
               position="relative"
@@ -40,13 +40,19 @@ export default function Home() {
             <div style={{ width: "92%", height: "92%", color: borderColor, display: "flex", flexDirection: "column", alignItems: "flex-start", padding: 5, boxSizing: "border-box" }}>
                 <h3 style={{ margin: 0, fontSize: 18 , color: textColor}}>Enter Two People</h3>
                 <div style={{ height: 12 }} />
-                  <label style={{ fontSize: 12, color: textColor }}>Start Person</label>
+                  <label style={{ fontSize: 12, color: textColor }}>Start Entity</label>
                 <div style={{ height: 8 }} />
-                <div style={{ width: "100%", background: "#0b0d11", borderRadius: 8, padding: 12, color: textColor }}>Select start...</div>
+                  <TextField id="outlined-basic" label="Wiki Entity" variant="outlined" fullWidth
+                    sx={{ "& .MuiOutlinedInput-root": { height: 50, color: textColor, "& fieldset": { borderColor: borderColor }, 
+                        "&:hover fieldset": { borderColor: borderColor }, "&.Mui-focused fieldset": { borderColor: borderColor } },
+                        "& .MuiInputLabel-root": { color: textColor }, "& .MuiInputLabel-root.Mui-focused": { color: textColor } }}/>
                 <div style={{ height: 12 }} />
-                  <label style={{ fontSize: 12, color: textColor }}>End Person</label>
+                  <label style={{ fontSize: 12, color: textColor }}>End Entity</label>
                 <div style={{ height: 8 }} />
-                  <div style={{ width: "100%", background: "#0b0d11", borderRadius: 8, padding: 12, color: textColor }}>Select end...</div>
+                    <TextField id="outlined-basic" label="Wiki Entity" variant="outlined" fullWidth
+                    sx={{ "& .MuiOutlinedInput-root": { height: 50, color: textColor, "& fieldset": { borderColor: borderColor }, 
+                        "&:hover fieldset": { borderColor: borderColor }, "&.Mui-focused fieldset": { borderColor: borderColor } },
+                        "& .MuiInputLabel-root": { color: textColor }, "& .MuiInputLabel-root.Mui-focused": { color: textColor } }}/>
                 <div style={{ flex: 1 }} />
                   <Button   style={{ width: "100%", height: 40, background: borderColor, borderRadius: 8, border: `1px solid ${borderColor}`, color: textColor, cursor: "pointer", fontSize: 14, fontWeight: 500, transition: "all 0.2s ease" }}>
                     Search
@@ -56,7 +62,7 @@ export default function Home() {
 
             <Rectangle
               width="100%"
-              height={480}
+              height={420}
               color="#0e1116"
               radius={12}
               position="relative"
@@ -76,7 +82,7 @@ export default function Home() {
 
           {/* Right column */}
           <div style={{ flex: 1 }}>
-            <Rectangle width="100%" height={720} color="#0d1116" radius={12} position="relative" borderColor={borderColor} borderWidth={1}>
+            <Rectangle width="100%" height={740} color="#0d1116" radius={12} position="relative" borderColor={borderColor} borderWidth={1}>
               <div style={{ width: "96%", height: "96%", padding: 14, boxSizing: "border-box", color: textColor }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <h3 style={{ margin: 0, fontSize: 18 }}>Network Visualization</h3>
