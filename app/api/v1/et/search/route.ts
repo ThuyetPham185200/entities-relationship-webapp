@@ -7,7 +7,7 @@ export async function GET(req: Request) {
   const backend = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
   try {
-    const res = await fetch(`${backend}/api/search?q=${encodeURIComponent(query)}`);
+    const res = await fetch(`${backend}/api/v1/et/search?q=${encodeURIComponent(query)}`);
     const data = await res.json();
 
     return NextResponse.json(data, { status: res.status });

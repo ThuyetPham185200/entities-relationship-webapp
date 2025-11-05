@@ -4,7 +4,7 @@
 export async function searchEntities(keyword: string) {
   try {
 
-    const res = await fetch(`/api/search?q=${encodeURIComponent(keyword)}`);
+    const res = await fetch(`/api/v1/et/search?q=${encodeURIComponent(keyword)}`);
 
     if (!res.ok) {
       let msg = `Failed to search entities (status ${res.status})`;
