@@ -1,10 +1,10 @@
 // lib/api.ts
 // Calls the Next.js API route `/api/search` which proxies to the backend.
 
-export async function searchEntities(keyword: string) {
+export async function searchEntities(keyword: string, size: number = 5) {
   try {
 
-    const res = await fetch(`/api/v1/et/search?q=${encodeURIComponent(keyword)}`);
+    const res = await fetch(`/api/v1/et/search?keyword=${encodeURIComponent(keyword)}&size=${size}`);
 
     if (!res.ok) {
       let msg = `Failed to search entities (status ${res.status})`;

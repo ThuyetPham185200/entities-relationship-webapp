@@ -3,11 +3,13 @@ import { NextResponse } from "next/server";
 export async function GET(req: Request) {
     
   const { searchParams } = new URL(req.url);
-  const query = searchParams.get("q") || "";
+  const query = searchParams.get("keyword") || "";
+  const size = searchParams.get("size") || "";
+
   const backend = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
 
   try {
-    const res = await fetch(`${backend}/api/v1/et/search?q=${encodeURIComponent(query)}`);
+    const res = await fetch(`${backend}/api/v1/et/search?keyword=${encodeURIComponent(query)}&size=${encodeURIComponent(size)}`);
     const data = await res.json();
 
     return NextResponse.json(data, { status: res.status });

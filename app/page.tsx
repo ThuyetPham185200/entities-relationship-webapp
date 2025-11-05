@@ -9,7 +9,6 @@ import { searchEntities } from "@/lib/api";
 interface SearchResult {
   id: string;
   title: string;
-  description: string;
 }
 
 export default function Home() {
@@ -148,7 +147,6 @@ export default function Home() {
                               >
                                 <ListItemText
                                   primary={result.title}
-                                  secondary={result.description}
                                   secondaryTypographyProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
                                 />
                               </ListItem>
@@ -226,7 +224,6 @@ export default function Home() {
                               >
                                 <ListItemText
                                   primary={result.title}
-                                  secondary={result.description}
                                   secondaryTypographyProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
                                 />
                               </ListItem>
