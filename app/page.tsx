@@ -1,13 +1,54 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Rectangle from "@/components/Rectangle";
 import LineBorder from "@/components/LineBorder";
-import { Button, TextField, Card } from "@mui/material";
+import { Button, TextField, Card, Popper, Paper, List, ListItem, ListItemText, ClickAwayListener } from "@mui/material";
+import { searchEntities } from "@/lib/api";
+
+interface SearchResult {
+  id: string;
+  title: string;
+  description: string;
+}
 
 export default function Home() {
   const headerHeight = 120;
   const borderColor = "#28ccd4ff";
   const textColor = "#ffffff";
+
+  const [startEntity, setStartEntity] = useState("");
+  const [endEntity, setEndEntity] = useState("");
+  const [startResults, setStartResults] = useState<SearchResult[]>([]);
+  const [endResults, setEndResults] = useState<SearchResult[]>([]);
+  const [startAnchorEl, setStartAnchorEl] = useState<null | HTMLElement>(null);
+  const [endAnchorEl, setEndAnchorEl] = useState<null | HTMLElement>(null);
+
+  useEffect(() => {
+    const searchStart = async () => {
+      if (startEntity.trim().length >= 2) {
+        const results = await searchEntities(startEntity);
+        setStartResults(results);
+      } else {
+        setStartResults([]);
+      }
+    };
+    const timeoutId = setTimeout(searchStart, 300);
+    return () => clearTimeout(timeoutId);
+  }, [startEntity]);
+
+  useEffect(() => {
+    const searchEnd = async () => {
+      if (endEntity.trim().length >= 2) {
+        const results = await searchEntities(endEntity);
+        setEndResults(results);
+      } else {
+        setEndResults([]);
+      }
+    };
+    const timeoutId = setTimeout(searchEnd, 300);
+    return () => clearTimeout(timeoutId);
+  }, [endEntity]);
 
   return (
     <main style={{ minHeight: "100vh", width: "100%" }}>
@@ -42,17 +83,159 @@ export default function Home() {
                 <div style={{ height: 12 }} />
                   <label style={{ fontSize: 12, color: textColor }}>Start Entity</label>
                 <div style={{ height: 8 }} />
-                  <TextField id="outlined-basic" label="Wiki Entity" variant="outlined" fullWidth
-                    sx={{ "& .MuiOutlinedInput-root": { height: 50, color: textColor, "& fieldset": { borderColor: borderColor }, 
-                        "&:hover fieldset": { borderColor: borderColor }, "&.Mui-focused fieldset": { borderColor: borderColor } },
-                        "& .MuiInputLabel-root": { color: textColor }, "& .MuiInputLabel-root.Mui-focused": { color: textColor } }}/>
+                  <div style={{ position: 'relative', width: '100%' }}>
+                    <TextField
+                      id="start-entity"
+                      label="Wiki Entity"
+                      variant="outlined"
+                      fullWidth
+                      value={startEntity}
+                      onChange={(e) => {
+                        setStartEntity(e.target.value);
+                        setStartAnchorEl(e.currentTarget);
+                      }}
+                      sx={{ 
+                        "& .MuiOutlinedInput-root": { 
+                          height: 50, 
+                          color: textColor, 
+                          fontFamily: 'inherit',
+                          "& fieldset": { borderColor: borderColor }, 
+                          "&:hover fieldset": { borderColor: borderColor }, 
+                          "&.Mui-focused fieldset": { borderColor: borderColor } 
+                        },
+                        "& .MuiInputLabel-root": { 
+                          color: textColor, 
+                          fontFamily: 'inherit'
+                        }, 
+                        "& .MuiInputLabel-root.Mui-focused": { 
+                          color: textColor, 
+                          fontFamily: 'inherit'
+                        }
+                      }}
+                    />
+                    <Popper
+                      open={Boolean(startAnchorEl) && startResults.length > 0}
+                      anchorEl={startAnchorEl}
+                      placement="bottom-start"
+                      style={{ width: startAnchorEl?.clientWidth, zIndex: 1000 }}
+                    >
+                      <ClickAwayListener onClickAway={() => setStartAnchorEl(null)}>
+                        <Paper
+                          style={{
+                            background: '#0e1116',
+                            border: `1px solid ${borderColor}`,
+                            maxHeight: 200,
+                            overflow: 'auto'
+                          }}
+                        >
+                          <List>
+                            {startResults.map((result) => (
+                              <ListItem
+                                key={result.id}
+                                onClick={() => {
+                                  setStartEntity(result.title);
+                                  setStartAnchorEl(null);
+                                }}
+                                style={{
+                                  cursor: 'pointer',
+                                  color: textColor,
+                                }}
+                                sx={{
+                                  '&:hover': {
+                                    backgroundColor: 'rgba(40, 204, 212, 0.1)'
+                                  }
+                                }}
+                              >
+                                <ListItemText
+                                  primary={result.title}
+                                  secondary={result.description}
+                                  secondaryTypographyProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+                                />
+                              </ListItem>
+                            ))}
+                          </List>
+                        </Paper>
+                      </ClickAwayListener>
+                    </Popper>
+                  </div>
                 <div style={{ height: 12 }} />
                   <label style={{ fontSize: 12, color: textColor }}>End Entity</label>
                 <div style={{ height: 8 }} />
-                    <TextField id="outlined-basic" label="Wiki Entity" variant="outlined" fullWidth
-                    sx={{ "& .MuiOutlinedInput-root": { height: 50, color: textColor, "& fieldset": { borderColor: borderColor }, 
-                        "&:hover fieldset": { borderColor: borderColor }, "&.Mui-focused fieldset": { borderColor: borderColor } },
-                        "& .MuiInputLabel-root": { color: textColor }, "& .MuiInputLabel-root.Mui-focused": { color: textColor } }}/>
+                  <div style={{ position: 'relative', width: '100%' }}>
+                    <TextField
+                      id="end-entity"
+                      label="Wiki Entity"
+                      variant="outlined"
+                      fullWidth
+                      value={endEntity}
+                      onChange={(e) => {
+                        setEndEntity(e.target.value);
+                        setEndAnchorEl(e.currentTarget);
+                      }}
+                      sx={{ 
+                        "& .MuiOutlinedInput-root": { 
+                          height: 50, 
+                          color: textColor, 
+                          fontFamily: 'inherit',
+                          "& fieldset": { borderColor: borderColor }, 
+                          "&:hover fieldset": { borderColor: borderColor }, 
+                          "&.Mui-focused fieldset": { borderColor: borderColor } 
+                        },
+                        "& .MuiInputLabel-root": { 
+                          color: textColor, 
+                          fontFamily: 'inherit'
+                        }, 
+                        "& .MuiInputLabel-root.Mui-focused": { 
+                          color: textColor, 
+                          fontFamily: 'inherit'
+                        }
+                      }}
+                    />
+                    <Popper
+                      open={Boolean(endAnchorEl) && endResults.length > 0}
+                      anchorEl={endAnchorEl}
+                      placement="bottom-start"
+                      style={{ width: endAnchorEl?.clientWidth, zIndex: 1000 }}
+                    >
+                      <ClickAwayListener onClickAway={() => setEndAnchorEl(null)}>
+                        <Paper
+                          style={{
+                            background: '#0e1116',
+                            border: `1px solid ${borderColor}`,
+                            maxHeight: 200,
+                            overflow: 'auto'
+                          }}
+                        >
+                          <List>
+                            {endResults.map((result) => (
+                              <ListItem
+                                key={result.id}
+                                onClick={() => {
+                                  setEndEntity(result.title);
+                                  setEndAnchorEl(null);
+                                }}
+                                style={{
+                                  cursor: 'pointer',
+                                  color: textColor,
+                                }}
+                                sx={{
+                                  '&:hover': {
+                                    backgroundColor: 'rgba(40, 204, 212, 0.1)'
+                                  }
+                                }}
+                              >
+                                <ListItemText
+                                  primary={result.title}
+                                  secondary={result.description}
+                                  secondaryTypographyProps={{ style: { color: 'rgba(255, 255, 255, 0.7)' } }}
+                                />
+                              </ListItem>
+                            ))}
+                          </List>
+                        </Paper>
+                      </ClickAwayListener>
+                    </Popper>
+                  </div>
                 <div style={{ flex: 1 }} />
                   <Button   style={{ width: "100%", height: 40, background: borderColor, borderRadius: 8, border: `1px solid ${borderColor}`, color: textColor, cursor: "pointer", fontSize: 14, fontWeight: 500, transition: "all 0.2s ease" }}>
                     Search
