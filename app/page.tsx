@@ -1,10 +1,57 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import dynamic from 'next/dynamic';
 import Rectangle from "@/components/Rectangle";
 import LineBorder from "@/components/LineBorder";
 import { Button, TextField, Card, Popper, Paper, List, ListItem, ListItemText, ClickAwayListener } from "@mui/material";
 import { searchEntities } from "@/lib/api";
+
+// Create a client-side only component for the graph
+const GraphComponent = dynamic(
+  () => import('react-force-graph-2d').then(mod => {
+    const Graph = mod.default;
+    return function GraphWrapper(props: any) {
+      return <Graph {...props} />;
+    };
+  }),
+  {
+    ssr: false,
+    loading: () => (
+      <div style={{ 
+        width: "100%", 
+        height: "100%", 
+        display: "flex", 
+        alignItems: "center", 
+        justifyContent: "center",
+        color: "#ffffff"
+      }}>
+        Loading graph visualization...
+      </div>
+    )
+  }
+);
+
+interface GraphNode {
+  id: string;
+  name: string;
+  color?: string;
+  x?: number;
+  y?: number;
+  fx?: number | undefined;
+  fy?: number | undefined;
+}
+
+interface GraphLink {
+  source: string;
+  target: string;
+  value?: number;
+}
+
+interface GraphData {
+  nodes: GraphNode[];
+  links: GraphLink[];
+}
 
 interface SearchResult {
   id: string;
@@ -22,6 +69,76 @@ export default function Home() {
   const [endResults, setEndResults] = useState<SearchResult[]>([]);
   const [startAnchorEl, setStartAnchorEl] = useState<null | HTMLElement>(null);
   const [endAnchorEl, setEndAnchorEl] = useState<null | HTMLElement>(null);
+  const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
+  const [hoveredLink, setHoveredLink] = useState<GraphLink | null>(null);
+  const [selectedLink, setSelectedLink] = useState<GraphLink | null>(null);
+  const graphRef = useRef<any>(null);
+
+  const handleSearch = () => {
+    if (!startEntity || !endEntity) return;
+    
+    // Generate 100 random nodes
+    const newNodes: GraphNode[] = [];
+    const newLinks: GraphLink[] = [];
+
+    // Add start and end nodes
+    newNodes.push(
+      { id: '1', name: startEntity, color: '#3bd671' },
+      { id: '2', name: endEntity, color: '#ff5c6c' }
+    );
+
+    // Generate random nodes in a circular pattern
+    const radius = 200;
+    const angleStep = (2 * Math.PI) / 98; // For remaining 98 nodes
+
+    for (let i = 3; i <= 100; i++) {
+      const angle = angleStep * (i - 3);
+      const x = radius * Math.cos(angle);
+      const y = radius * Math.sin(angle);
+      
+      newNodes.push({
+        id: i.toString(),
+        name: `${Math.floor(Math.random() * 1000)}`,
+        color: '#6b5cff',
+        x, // Initial position
+        y,
+        fx: undefined, // Allow node to move
+        fy: undefined
+      });
+    }
+
+    // Generate random connections, but limit the number to reduce clutter
+    newNodes.forEach((node) => {
+      const numConnections = Math.floor(Math.random() * 2) + 1; // 1 to 2 connections
+      const connectedNodes = new Set(); // Track already connected nodes
+
+      for (let i = 0; i < numConnections; i++) {
+        const targetId = Math.floor(Math.random() * 98) + 3; // Only connect to random nodes (3-100)
+        if (targetId.toString() !== node.id && !connectedNodes.has(targetId)) {
+          connectedNodes.add(targetId);
+          newLinks.push({
+            source: node.id,
+            target: targetId.toString(),
+            value: 1
+          });
+        }
+      }
+    });
+
+    // Ensure start and end nodes are connected through some path
+    let intermediateNodes = [
+      Math.floor(Math.random() * 98) + 3,
+      Math.floor(Math.random() * 98) + 3
+    ].map(n => n.toString());
+
+    newLinks.push(
+      { source: '1', target: intermediateNodes[0] },
+      { source: intermediateNodes[0], target: intermediateNodes[1] },
+      { source: intermediateNodes[1], target: '2' }
+    );
+
+    setGraphData({ nodes: newNodes, links: newLinks });
+  };
 
   useEffect(() => {
     const searchStart = async () => {
@@ -93,14 +210,28 @@ export default function Home() {
                         setStartEntity(e.target.value);
                         setStartAnchorEl(e.currentTarget);
                       }}
+                      InputProps={{
+                        style: { color: textColor }
+                      }}
                       sx={{ 
                         "& .MuiOutlinedInput-root": { 
-                          height: 50, 
-                          color: textColor, 
-                          fontFamily: 'inherit',
-                          "& fieldset": { borderColor: borderColor }, 
-                          "&:hover fieldset": { borderColor: borderColor }, 
-                          "&.Mui-focused fieldset": { borderColor: borderColor } 
+                            height: 50,
+                            color: textColor,
+                            fontFamily: 'inherit',
+                            backgroundColor: '#181a20',
+                            "& input": {
+                              color: `${textColor} !important`,
+                              backgroundColor: '#181a20',
+                            },
+                            "& fieldset": { borderColor: borderColor },
+                            "&:hover fieldset": { borderColor: borderColor },
+                            "&.Mui-focused fieldset": { borderColor: borderColor },
+                            "&.Mui-focused": {
+                              "& input": {
+                                color: `${textColor} !important`,
+                                backgroundColor: '#181a20',
+                              }
+                            }
                         },
                         "& .MuiInputLabel-root": { 
                           color: textColor, 
@@ -140,9 +271,13 @@ export default function Home() {
                                   color: textColor,
                                 }}
                                 sx={{
-                                  '&:hover': {
-                                    backgroundColor: 'rgba(40, 204, 212, 0.1)'
-                                  }
+                                    '&:hover': {
+                                      backgroundColor: '#222831',
+                                      color: textColor,
+                                      '& .MuiListItemText-primary': {
+                                        color: textColor
+                                      }
+                                    }
                                 }}
                               >
                                 <ListItemText
@@ -170,14 +305,25 @@ export default function Home() {
                         setEndEntity(e.target.value);
                         setEndAnchorEl(e.currentTarget);
                       }}
+                      InputProps={{
+                        style: { color: textColor }
+                      }}
                       sx={{ 
                         "& .MuiOutlinedInput-root": { 
                           height: 50, 
                           color: textColor, 
                           fontFamily: 'inherit',
+                          "& input": {
+                            color: `${textColor} !important`,
+                          },
                           "& fieldset": { borderColor: borderColor }, 
                           "&:hover fieldset": { borderColor: borderColor }, 
-                          "&.Mui-focused fieldset": { borderColor: borderColor } 
+                          "&.Mui-focused fieldset": { borderColor: borderColor },
+                          "&.Mui-focused": {
+                            "& input": {
+                              color: `${textColor} !important`,
+                            }
+                          }
                         },
                         "& .MuiInputLabel-root": { 
                           color: textColor, 
@@ -234,7 +380,21 @@ export default function Home() {
                     </Popper>
                   </div>
                 <div style={{ flex: 1 }} />
-                  <Button   style={{ width: "100%", height: 40, background: borderColor, borderRadius: 8, border: `1px solid ${borderColor}`, color: textColor, cursor: "pointer", fontSize: 14, fontWeight: 500, transition: "all 0.2s ease" }}>
+                  <Button 
+                    onClick={handleSearch}
+                    style={{ 
+                      width: "100%", 
+                      height: 40, 
+                      background: borderColor, 
+                      borderRadius: 8, 
+                      border: `1px solid ${borderColor}`, 
+                      color: textColor, 
+                      cursor: "pointer", 
+                      fontSize: 14, 
+                      fontWeight: 500, 
+                      transition: "all 0.2s ease" 
+                    }}
+                  >
                     Search
                   </Button>
               </div>
@@ -269,7 +429,115 @@ export default function Home() {
                   <div style={{ fontSize: 12, background: "#0c1016", padding: "6px 8px", borderRadius: 6, color: textColor }}>Nodes explored: 0</div>
                 </div>
                 <div style={{ height: 12 }} />
-                <div style={{ width: "100%", height: "calc(100% - 64px)", background: "linear-gradient(180deg,#0b0d11,#0f1116)", borderRadius: 8, border: `1px solid ${borderColor}` }} />
+                <div 
+                  className="force-graph-container"
+                  style={{ 
+                    width: "100%", 
+                    height: "600px", // Set fixed height
+                    background: "linear-gradient(180deg,#0b0d11,#0f1116)", 
+                    borderRadius: 8, 
+                    border: `1px solid ${borderColor}`,
+                    overflow: 'hidden',
+                    position: 'relative'
+                  }}
+                >
+                  <Suspense fallback={
+                    <div style={{ 
+                      width: "100%", 
+                      height: "100%", 
+                      display: "flex", 
+                      alignItems: "center", 
+                      justifyContent: "center",
+                      color: "#ffffff"
+                    }}>
+                      Loading graph visualization...
+                    </div>
+                  }>
+                    <GraphComponent
+                      ref={graphRef}
+                      graphData={graphData}
+                      nodeLabel="name"
+                      nodeColor={(node: GraphNode) => node.color || '#fff'}
+                      linkColor={(link: GraphLink) => {
+                        if (
+                          selectedLink &&
+                          ((selectedLink.source === link.source && selectedLink.target === link.target) ||
+                           (selectedLink.source === link.target && selectedLink.target === link.source))
+                        ) {
+                          return 'red';
+                        }
+                        if (
+                          hoveredLink &&
+                          ((hoveredLink.source === link.source && hoveredLink.target === link.target) ||
+                           (hoveredLink.source === link.target && hoveredLink.target === link.source))
+                        ) {
+                          return '#fff';
+                        }
+                        return 'rgba(40, 204, 212, 0.1)';
+                      }}
+                      nodeRelSize={7}
+                      linkWidth={(link: GraphLink) => {
+                        if (
+                          selectedLink &&
+                          ((selectedLink.source === link.source && selectedLink.target === link.target) ||
+                           (selectedLink.source === link.target && selectedLink.target === link.source))
+                        ) {
+                          return 6;
+                        }
+                        if (
+                          hoveredLink &&
+                          ((hoveredLink.source === link.source && hoveredLink.target === link.target) ||
+                           (hoveredLink.source === link.target && hoveredLink.target === link.source))
+                        ) {
+                          return 6;
+                        }
+                        return 3;
+                      }}
+                      backgroundColor="transparent"
+                      width={600}
+                      height={600}
+                      onEngineStop={() => {
+                        console.log("Engine stopped, nodes:", graphData.nodes.length);
+                        if (graphRef.current) {
+                          graphRef.current.zoomToFit(400);
+                        }
+                      }}
+                      onEngineStart={() => {
+                        console.log("Engine started with data:", graphData);
+                      }}
+                      cooldownTicks={100}
+                      warmupTicks={50}
+                      nodeCanvasObject={(node: any, ctx: any, globalScale: number) => {
+                        // Draw circle
+                        ctx.beginPath();
+                        ctx.arc(node.x, node.y, 7, 0, 2 * Math.PI, false);
+                        ctx.fillStyle = node.color || '#6b5cff';
+                        ctx.shadowColor = node.color || '#6b5cff';
+                        ctx.shadowBlur = 2;
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                        // Optionally, draw label inside the circle
+                        ctx.font = `${9/globalScale}px Sans-Serif`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillStyle = '#fff';
+                        ctx.fillText(node.name, node.x, node.y);
+                      }}
+                      onLinkHover={(link: GraphLink | null) => {
+                        setHoveredLink(link);
+                        if (!link) setSelectedLink(null);
+                        const container = document.querySelector('.force-graph-container') as HTMLElement;
+                        if (container) {
+                          container.style.cursor = link ? 'pointer' : 'default';
+                        }
+                      }}
+                      onLinkClick={(link: GraphLink) => {
+                        setSelectedLink(link);
+                        console.log('clicked to relationship');
+                      }}
+                    />
+                  </Suspense>
+                </div>
                 <div style={{ height: 12 }} />
                 <div style={{ display: "flex", gap: 12, alignItems: "center", color: textColor }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
