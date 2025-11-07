@@ -73,6 +73,21 @@ export default function Home() {
   const [hoveredLink, setHoveredLink] = useState<GraphLink | null>(null);
   const [selectedLink, setSelectedLink] = useState<GraphLink | null>(null);
   const graphRef = useRef<any>(null);
+  const graphContainerRef = useRef<HTMLDivElement>(null);
+  const [graphSize, setGraphSize] = useState({ width: 600, height: 600 });
+
+  // Resize observer to make the graph fit the container
+  useEffect(() => {
+    function updateSize() {
+      if (graphContainerRef.current) {
+        const rect = graphContainerRef.current.getBoundingClientRect();
+        setGraphSize({ width: rect.width, height: rect.height });
+      }
+    }
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
 
   const handleSearch = () => {
     if (!startEntity || !endEntity) return;
@@ -431,9 +446,10 @@ export default function Home() {
                 <div style={{ height: 12 }} />
                 <div 
                   className="force-graph-container"
+                  ref={graphContainerRef}
                   style={{ 
                     width: "100%", 
-                    height: "600px", // Set fixed height
+                    height: "600px",
                     background: "linear-gradient(180deg,#0b0d11,#0f1116)", 
                     borderRadius: 8, 
                     border: `1px solid ${borderColor}`,
@@ -494,8 +510,8 @@ export default function Home() {
                         return 3;
                       }}
                       backgroundColor="transparent"
-                      width={600}
-                      height={600}
+                      width={graphSize.width}
+                      height={graphSize.height}
                       onEngineStop={() => {
                         console.log("Engine stopped, nodes:", graphData.nodes.length);
                         if (graphRef.current) {
