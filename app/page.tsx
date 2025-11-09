@@ -235,297 +235,224 @@ export default function Home() {
     };
   }, [wsClient]);
 
-  const handleSearch = async () => {
-    if (!startEntity || !endEntity) return;
+const handleSearch = async () => {
+  if (!startEntity || !endEntity) return;
 
-    // Close any existing WebSocket connection
-    if (wsClient) {
-      wsClient.close();
+  // Close any existing WebSocket connection
+  if (wsClient) {
+    wsClient.close();
+    setWsClient(null);
+  }
+
+  setLoadingSearch(true);
+  setGraphData({ nodes: [], links: [] }); // Clear existing graph
+
+  try {
+    // Try to find selected items in existing results lists
+    let startItem = startResults.find((r) => r.title === startEntity);
+    let endItem = endResults.find((r) => r.title === endEntity);
+
+    // If not found, fallback to querying the server for the entity (take first match)
+    if (!startItem) {
+      return;
+
+    }
+    if (!endItem) {
+      return;
+
+    }
+
+    // Call the backend to start relationship search using ids
+    const info = await searchRelationship(startItem.id, endItem.id);
+    console.log('searchRelationship result:', info);
+    setRelationshipInfo(info);
+    setSearchLog((s) => [
+      `${new Date().toLocaleTimeString()}: searchRelationship(${startItem!.id}, ${endItem!.id}) -> request_id=${info.request_id}`,
+      ...s,
+    ]);
+
+    // Create WebSocket connection using server info from the response
+    if (!info.websocket_server_info?.ip || !info.websocket_server_info?.port) {
+      const msg = 'No WebSocket server information provided in the response';
+      console.error(msg, info);
+      setSearchLog((s) => [`${new Date().toLocaleTimeString()}: ${msg}`, ...s]);
+      return;
+    }
+
+    const wsUrl = `ws://${info.websocket_server_info.ip}:${info.websocket_server_info.port}/ws?request_id=${info.request_id}`;
+    const ws = new WebSocket(wsUrl);
+
+    // Add connection timeout
+    const connectionTimeout = setTimeout(() => {
+      if (ws.readyState === WebSocket.CONNECTING) {
+        console.log('WebSocket connection timeout');
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: WebSocket connection timeout - Unable to connect to ${wsUrl}`,
+          ...s,
+        ]);
+        ws.close();
+      }
+    }, 5000); // 5 second timeout
+
+    // Set up WebSocket event handlers
+    ws.onopen = () => {
+      clearTimeout(connectionTimeout);
+      const connectionInfo = {
+        url: wsUrl,
+        protocol: ws.protocol || 'no-protocol',
+        readyState: ws.readyState,
+        extensions: ws.extensions || 'no-extensions',
+      };
+      console.log('WebSocket connected:', connectionInfo);
+      setSearchLog((s) => [
+        `${new Date().toLocaleTimeString()}: WebSocket connected - ${JSON.stringify(connectionInfo)}`,
+        ...s,
+      ]);
+      setWsConnecting(false);
+      setWsReconnectAttempt(0);
+      lastPongRef.current = Date.now(); // Reset pong timer
+
+      // Send initial message to verify connection
+      try {
+        ws.send(JSON.stringify({ type: 'init', request_id: info.request_id }));
+      } catch (err) {
+        console.error('Error sending init message:', err);
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: Failed to send init message - ${err}`,
+          ...s,
+        ]);
+      }
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        // Log all received data to search log
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: Received WebSocket data: ${JSON.stringify(data)}`,
+          ...s,
+        ]);
+
+        // Handle pong messages (optional, just reset timestamp)
+        if (data.type === 'pong') {
+          lastPongRef.current = Date.now();
+          return;
+        }
+
+        // Handle result type messages
+        if (data.type === 'result' && data.Entities && data.Relationships) {
+          const response = data as WebSocketResponse;
+          console.log('Received relationship data:', response);
+
+          // Transform entities into nodes
+          const graphNodes = response.Entities.map((entity: Entity) => ({
+            id: entity.id,
+            name: entity.name,
+            ref_link: entity.ref_link,
+            entity_type: entity.entity_type,
+            description: entity.short_description,
+            val: 1,
+            x: undefined,
+            y: undefined,
+            vx: 0,
+            vy: 0,
+            fx: undefined,
+            fy: undefined,
+          }));
+
+          const nodesById = Object.fromEntries(graphNodes.map((node) => [node.id, node]));
+
+          const graphLinks = response.Relationships.filter(
+            (rel: Relationship) => rel.entity_src in nodesById && rel.entity_dst in nodesById
+          ).map((rel: Relationship) => ({
+            source: nodesById[rel.entity_src],
+            target: nodesById[rel.entity_dst],
+            type: rel.relationship_type,
+            description: rel.short_description,
+            ref_link: rel.ref_link,
+            value: 1,
+          }));
+
+          // Color the nodes based on their role
+          const visualNodes = graphNodes.map((node) => ({
+            ...node,
+            color:
+              node.id === startItem!.id
+                ? '#3bd671'
+                : node.id === endItem!.id
+                ? '#ff5c6c'
+                : '#6b5cff',
+          }));
+
+          setGraphData({
+            nodes: visualNodes,
+            links: graphLinks,
+          });
+
+          setSearchLog((s) => [
+            `${new Date().toLocaleTimeString()}: Graph updated with ${graphNodes.length} entities and ${graphLinks.length} relationships`,
+            ...s,
+          ]);
+
+          // Zoom to fit the new graph
+          if (graphRef.current) {
+            setTimeout(() => {
+              graphRef.current.zoomToFit(400);
+            }, 250);
+          }
+        }
+      } catch (err) {
+        console.error('Error processing WebSocket message:', err);
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: Error processing graph data: ${err}`,
+          ...s,
+        ]);
+      }
+    };
+
+    ws.onerror = (error) => {
+      const errorDetails = {
+        type: error.type,
+        message: (error as any).message || 'Unknown error',
+        readyState: ws.readyState,
+        url: wsUrl,
+      };
+      console.error('WebSocket error:', errorDetails);
+      setSearchLog((s) => [
+        `${new Date().toLocaleTimeString()}: WebSocket error - ${JSON.stringify(errorDetails)}`,
+        ...s,
+      ]);
+    };
+
+    ws.onclose = (event) => {
+      const closeInfo = {
+        code: event.code,
+        reason: event.reason || 'No reason provided',
+        wasClean: event.wasClean,
+        readyState: ws.readyState,
+      };
+      console.log('WebSocket connection closed:', closeInfo);
+      setSearchLog((s) => [
+        `${new Date().toLocaleTimeString()}: WebSocket closed - ${JSON.stringify(closeInfo)}`,
+        ...s,
+      ]);
       setWsClient(null);
-    }
+      setWsConnecting(false);
+    };
 
-    setLoadingSearch(true);
-    setGraphData({ nodes: [], links: [] }); // Clear existing graph
-    try {
-      // Try to find selected items in existing results lists
-      let startItem = startResults.find((r) => r.title === startEntity);
-      let endItem = endResults.find((r) => r.title === endEntity);
+    setWsClient(ws);
+  } catch (err: any) {
+    console.error('Error during handleSearch:', err);
+    setSearchLog((s) => [
+      `${new Date().toLocaleTimeString()}: Error: ${err?.message || String(err)}`,
+      ...s,
+    ]);
+  } finally {
+    setLoadingSearch(false);
+  }
+};
 
-      // If not found, fallback to querying the server for the entity (take first match)
-      if (!startItem) {
-        const res = await searchEntities(startEntity, 1);
-        startItem = res && res.length > 0 ? res[0] : undefined;
-      }
-      if (!endItem) {
-        const res = await searchEntities(endEntity, 1);
-        endItem = res && res.length > 0 ? res[0] : undefined;
-      }
-
-      if (!startItem || !endItem) {
-        const msg = 'Could not resolve start or end entity to an id.';
-        console.warn(msg, { startItem, endItem });
-        setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: ${msg}`,
-          ...s,
-        ]);
-        return;
-      }
-
-      // Call the backend to start relationship search using ids
-      const info = await searchRelationship(startItem.id, endItem.id);
-      console.log('searchRelationship result:', info);
-      setRelationshipInfo(info);
-      setSearchLog((s) => [
-        `${new Date().toLocaleTimeString()}: searchRelationship(${startItem!.id}, ${endItem!.id}) -> request_id=${info.request_id}`,
-        ...s,
-      ]);
-
-      // Create WebSocket connection using server info from the response
-      if (!info.websocket_server_info?.ip || !info.websocket_server_info?.port) {
-        const msg = 'No WebSocket server information provided in the response';
-        console.error(msg, info);
-        setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: ${msg}`,
-          ...s,
-        ]);
-        return;
-      }
-
-      const wsUrl = `ws://${info.websocket_server_info.ip}:${info.websocket_server_info.port}/ws?request_id=${info.request_id}`;
-      const ws = new WebSocket(wsUrl);
-
-      // Add connection timeout
-      const connectionTimeout = setTimeout(() => {
-        if (ws.readyState === WebSocket.CONNECTING) {
-          console.log('WebSocket connection timeout');
-          setSearchLog((s) => [
-            `${new Date().toLocaleTimeString()}: WebSocket connection timeout - Unable to connect to ${wsUrl}`,
-            ...s,
-          ]);
-          ws.close();
-        }
-      }, 5000); // 5 second timeout
-
-      // Setup ping interval
-      const setupPingInterval = () => {
-        // Clear any existing ping timer
-        if (pingTimerRef.current) {
-          clearInterval(pingTimerRef.current);
-        }
-
-        // Start new ping timer
-        pingTimerRef.current = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: 'ping' }));
-            
-            // Check if we've received a pong recently
-            const timeSinceLastPong = Date.now() - lastPongRef.current;
-            if (timeSinceLastPong > PING_INTERVAL * 2) {
-              console.warn('No pong received, connection might be dead');
-              ws.close();
-            }
-          }
-        }, PING_INTERVAL);
-      };
-
-      // Set up WebSocket event handlers
-      ws.onopen = () => {
-        clearTimeout(connectionTimeout);
-        const connectionInfo = {
-          url: wsUrl,
-          protocol: ws.protocol || 'no-protocol',
-          readyState: ws.readyState,
-          extensions: ws.extensions || 'no-extensions'
-        };
-        console.log('WebSocket connected:', connectionInfo);
-        setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: WebSocket connected - ${JSON.stringify(connectionInfo)}`,
-          ...s,
-        ]);
-        setWsConnecting(false);
-        setWsReconnectAttempt(0);
-        setupPingInterval();
-        lastPongRef.current = Date.now(); // Reset pong timer
-        
-        // Send initial message to verify connection
-        try {
-          ws.send(JSON.stringify({ type: 'init', request_id: info.request_id }));
-        } catch (err) {
-          console.error('Error sending init message:', err);
-          setSearchLog((s) => [
-            `${new Date().toLocaleTimeString()}: Failed to send init message - ${err}`,
-            ...s,
-          ]);
-        }
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          // Log all received data to search log
-          setSearchLog((s) => [
-            `${new Date().toLocaleTimeString()}: Received WebSocket data: ${JSON.stringify(data)}`,
-            ...s,
-          ]);
-          
-          // Handle pong messages
-          if (data.type === 'pong') {
-            lastPongRef.current = Date.now();
-            return;
-          }
-
-          // Handle result type messages
-          if (data.type === 'result' && data.Entities && data.Relationships) {
-            const response = data as WebSocketResponse;
-            console.log('Received relationship data:', response);
-
-            // Transform entities into nodes with required force-graph properties
-            const graphNodes = response.Entities.map((entity: Entity) => ({
-              id: entity.id,           // Use the actual entity ID
-              name: entity.name,       // Display name
-              ref_link: entity.ref_link,
-              entity_type: entity.entity_type,
-              description: entity.short_description,
-              // Add required force-graph properties
-              val: 1,                  // Node value affects size
-              x: undefined,            // Allow force-graph to position
-              y: undefined,
-              vx: 0,                  // Initial velocities
-              vy: 0,
-              fx: undefined,          // Fixed positions (if needed)
-              fy: undefined
-            }));
-
-            // Create a nodes map for quick lookup
-            const nodesById = Object.fromEntries(graphNodes.map(node => [node.id, node]));
-
-            // Transform relationships into links with object references
-            const graphLinks = response.Relationships
-              .filter((rel: Relationship) => {
-                const hasNodes = rel.entity_src in nodesById && rel.entity_dst in nodesById;
-                if (!hasNodes) {
-                  console.warn('Missing node reference for relationship:', rel);
-                }
-                return hasNodes;
-              })
-              .map((rel: Relationship) => ({
-                source: nodesById[rel.entity_src],
-                target: nodesById[rel.entity_dst],
-                type: rel.relationship_type,
-                description: rel.short_description,
-                ref_link: rel.ref_link,
-                value: 1              // Link strength
-              }));
-
-            // Color the nodes based on their role
-            const visualNodes = graphNodes.map(node => ({
-              ...node,
-              color: node.id === startItem!.id ? '#3bd671' :  // Start node
-                     node.id === endItem!.id ? '#ff5c6c' :    // End node
-                     '#6b5cff'                                // Path node
-            }));
-
-            // Update graph data with the properly formatted nodes and links
-            setGraphData({
-              nodes: visualNodes,
-              links: graphLinks
-            });
-
-            setSearchLog((s) => [
-              `${new Date().toLocaleTimeString()}: Graph updated with ${graphNodes.length} entities and ${graphLinks.length} relationships`,
-              ...s,
-            ]);
-
-            // Zoom to fit the new graph
-            if (graphRef.current) {
-              setTimeout(() => {
-                graphRef.current.zoomToFit(400);
-              }, 250);
-            }
-          }
-        } catch (err) {
-          console.error('Error processing WebSocket message:', err);
-          setSearchLog((s) => [
-            `${new Date().toLocaleTimeString()}: Error processing graph data: ${err}`,
-            ...s,
-          ]);
-        }
-      };
-
-      ws.onerror = (error) => {
-        // Get more detailed error information
-        const errorDetails = {
-          type: error.type,
-          message: (error as any).message || 'Unknown error',
-          readyState: ws.readyState,
-          url: wsUrl
-        };
-        console.error('WebSocket error:', errorDetails);
-        setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: WebSocket error - ${JSON.stringify(errorDetails)}`,
-          ...s,
-        ]);
-      };
-
-      ws.onclose = (event) => {
-        const closeInfo = {
-          code: event.code,
-          reason: event.reason || 'No reason provided',
-          wasClean: event.wasClean,
-          readyState: ws.readyState
-        };
-        console.log('WebSocket connection closed:', closeInfo);
-        setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: WebSocket closed - ${JSON.stringify(closeInfo)}`,
-          ...s,
-        ]);
-        setWsClient(null);
-
-        // Clear ping interval
-        if (pingTimerRef.current) {
-          clearInterval(pingTimerRef.current);
-          pingTimerRef.current = null;
-        }
-
-        // Attempt to reconnect if we haven't exceeded max attempts
-        if (wsReconnectAttempt < RECONNECT_ATTEMPTS && relationshipInfo?.request_id) {
-          const delay = INITIAL_RECONNECT_DELAY * Math.pow(2, wsReconnectAttempt);
-          console.log(`Attempting to reconnect in ${delay}ms (attempt ${wsReconnectAttempt + 1}/${RECONNECT_ATTEMPTS})`);
-          
-          setSearchLog((s) => [
-            `${new Date().toLocaleTimeString()}: Reconnecting in ${delay}ms (attempt ${wsReconnectAttempt + 1}/${RECONNECT_ATTEMPTS})`,
-            ...s,
-          ]);
-
-          setWsConnecting(true);
-          setTimeout(() => {
-            if (wsReconnectAttempt < RECONNECT_ATTEMPTS) {
-              setWsReconnectAttempt(prev => prev + 1);
-              handleSearch(); // Retry the connection
-            } else {
-              setWsConnecting(false);
-              setSearchLog((s) => [
-                `${new Date().toLocaleTimeString()}: Failed to reconnect after ${RECONNECT_ATTEMPTS} attempts`,
-                ...s,
-              ]);
-            }
-          }, delay);
-        }
-      };
-
-      setWsClient(ws);
-
-    } catch (err: any) {
-      console.error('Error during handleSearch:', err);
-      setSearchLog((s) => [
-        `${new Date().toLocaleTimeString()}: Error: ${err?.message || String(err)}`,
-        ...s,
-      ]);
-    } finally {
-      setLoadingSearch(false);
-    }
-  };
 
   useEffect(() => {
     const searchStart = async () => {
@@ -783,6 +710,7 @@ export default function Home() {
                   </div>
                 <div style={{ flex: 1 }} />
                   <Button 
+                    type="button"
                     onClick={handleSearch}
                     disabled={loadingSearch}
                     style={{ 
