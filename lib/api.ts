@@ -48,3 +48,60 @@ export async function searchEntities(keyword: string, size: number = 5) {
     throw new Error(`searchEntities: ${err?.message || String(err)}`);
   }
 }
+
+
+export interface WebsocketInfo {
+  ip: string;
+  port: string;
+}
+
+export interface SPProcessResult {
+  request_id: string;
+  websocket_server_info: WebsocketInfo;
+  status: string;
+}
+
+export async function searchRelationship(id1: string, id2: string): Promise<SPProcessResult> {
+  try {
+    const res = await fetch(
+      `/api/v1/srp/search?entity_one=${encodeURIComponent(id1)}&entity_two=${encodeURIComponent(id2)}`
+    );
+
+    if (!res.ok) {
+      let msg = `Failed to search relationship (status ${res.status})`;
+      try {
+        const body = await res.json();
+        if (body && body.error) msg += `: ${body.error}`;
+      } catch (_) {}
+      throw new Error(msg);
+    }
+
+    const data = await res.json();
+
+    // ✅ Debug log to see exactly what server sends
+    console.log("📦 Raw SPProcessResult from server:", data);
+
+    // ✅ Type guard / normalization
+    if (
+      typeof data === "object" &&
+      data !== null &&
+      "request_id" in data &&
+      "websocket_server_info" in data
+    ) {
+      const info = data.websocket_server_info || {};
+      return {
+        request_id: String(data.request_id),
+        websocket_server_info: {
+          ip: String(info.ip || ""),
+          port: String(info.port || ""),
+        },
+        status: String(data.status || ""),
+      };
+    }
+
+    console.warn("searchRelationship: unexpected response shape", data);
+    throw new Error("Invalid response shape from server");
+  } catch (err: any) {
+    throw new Error(`searchRelationship: ${err?.message || String(err)}`);
+  }
+}

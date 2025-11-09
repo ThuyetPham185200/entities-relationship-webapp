@@ -12,7 +12,8 @@ export default function EntitySearchField({
   onSelect: (value: string) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<string[]>([]);
+  // searchEntities() returns an array of normalized items: { id, title, description }
+  const [results, setResults] = useState<Array<{ id: string; title: string; description?: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [showPopup, setShowPopup] = useState(false);
 
@@ -26,7 +27,8 @@ export default function EntitySearchField({
         try {
           setLoading(true);
           const data = await searchEntities(query);
-          setResults(data.results || []);
+          // searchEntities returns an array of normalized items; use it directly
+          setResults(Array.isArray(data) ? data : []);
           setShowPopup(true);
         } catch (err) {
           setResults([]);
@@ -85,12 +87,12 @@ export default function EntitySearchField({
         >
           <List dense>
             {results.map((r) => (
-              <ListItem key={r} disablePadding>
+              <ListItem key={r.id} disablePadding>
                 <ListItemButton
                   onClick={() => {
-                    setQuery(r);
+                    setQuery(r.title);
                     setShowPopup(false);
-                    onSelect(r);
+                    onSelect(r.title);
                   }}
                   sx={{
                     color: textColor,
@@ -98,7 +100,7 @@ export default function EntitySearchField({
                     "&:hover": { backgroundColor: "#333" },
                   }}
                 >
-                  {r}
+                  {r.title}
                 </ListItemButton>
               </ListItem>
             ))}

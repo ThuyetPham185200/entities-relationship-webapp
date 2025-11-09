@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic';
 import Rectangle from "@/components/Rectangle";
 import LineBorder from "@/components/LineBorder";
 import { Button, TextField, Card, Popper, Paper, List, ListItem, ListItemText, ClickAwayListener } from "@mui/material";
-import { searchEntities } from "@/lib/api";
+import { searchEntities, searchRelationship} from "@/lib/api";
 
 // Create a client-side only component for the graph
 const GraphComponent = dynamic(
@@ -35,17 +35,56 @@ const GraphComponent = dynamic(
 interface GraphNode {
   id: string;
   name: string;
+  ref_link: string;
+  entity_type: string;
+  description: string;
   color?: string;
-  x?: number;
-  y?: number;
-  fx?: number | undefined;
-  fy?: number | undefined;
+  // Force-graph specific properties
+  val?: number;         // Node value (affects size)
+  x?: number;          // Current x position
+  y?: number;          // Current y position
+  vx?: number;         // Velocity x
+  vy?: number;         // Velocity y
+  fx?: number | null;  // Fixed x position
+  fy?: number | null;  // Fixed y position
 }
 
 interface GraphLink {
-  source: string;
-  target: string;
+  source: GraphNode;  // Changed to use node objects instead of strings
+  target: GraphNode;
+  type: string;
+  description: string;
+  ref_link: string;
   value?: number;
+}
+
+interface Entity {
+  id: string;         // Required unique identifier
+  name: string;       // Display name
+  ref_link: string;
+  entity_type: string;
+  short_description: string;
+}
+
+interface Relationship {
+  entity_src: string;  // Should match Entity.id
+  entity_dst: string;  // Should match Entity.id
+  relationship_type: string;
+  short_description: string;
+  ref_link: string;
+}
+
+interface WebSocketResponse {
+  request_id: string;
+  type: string;
+  Entities: Entity[];
+  Relationships: Relationship[];
+}
+
+interface SearchItem {
+  id: string;         // Unique identifier
+  title: string;      // Display name
+  description?: string;
 }
 
 interface GraphData {
@@ -56,12 +95,33 @@ interface GraphData {
 interface SearchResult {
   id: string;
   title: string;
+  description?: string;
+}
+
+interface Relationship {
+  entity_src: string;
+  entity_dst: string;
+  relationship_type: string;
+  short_description: string;
+  ref_link: string;
+}
+
+interface WebSocketResponse {
+  request_id: string;
+  type: string;
+  Entities: Entity[];
+  Relationships: Relationship[];
 }
 
 export default function Home() {
   const headerHeight = 120;
   const borderColor = "#28ccd4ff";
   const textColor = "#ffffff";
+
+  // WebSocket connection constants
+  const PING_INTERVAL = 30000; // Send ping every 30 seconds
+  const RECONNECT_ATTEMPTS = 5;
+  const INITIAL_RECONNECT_DELAY = 1000; // Start with 1 second delay
 
   const [startEntity, setStartEntity] = useState("");
   const [endEntity, setEndEntity] = useState("");
@@ -72,6 +132,16 @@ export default function Home() {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   const [hoveredLink, setHoveredLink] = useState<GraphLink | null>(null);
   const [selectedLink, setSelectedLink] = useState<GraphLink | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [isCreatingLink, setIsCreatingLink] = useState(false);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+  const [searchLog, setSearchLog] = useState<Array<string>>([]);
+  const [relationshipInfo, setRelationshipInfo] = useState<any>(null);
+  const [wsClient, setWsClient] = useState<WebSocket | null>(null);
+  const [wsConnecting, setWsConnecting] = useState(false);
+  const [wsReconnectAttempt, setWsReconnectAttempt] = useState(0);
+  const pingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastPongRef = useRef<number>(Date.now());
   const graphRef = useRef<any>(null);
   const graphContainerRef = useRef<HTMLDivElement>(null);
   const [graphSize, setGraphSize] = useState({ width: 600, height: 600 });
@@ -89,70 +159,372 @@ export default function Home() {
     return () => window.removeEventListener('resize', updateSize);
   }, []);
 
-  const handleSearch = () => {
-    if (!startEntity || !endEntity) return;
+  // const handleSearch = () => {
+  //   if (!startEntity || !endEntity) return;
     
-    // Generate 100 random nodes
-    const newNodes: GraphNode[] = [];
-    const newLinks: GraphLink[] = [];
+  //   // Generate 100 random nodes
+  //   const newNodes: GraphNode[] = [];
+  //   const newLinks: GraphLink[] = [];
 
-    // Add start and end nodes
-    newNodes.push(
-      { id: '1', name: startEntity, color: '#3bd671' },
-      { id: '2', name: endEntity, color: '#ff5c6c' }
-    );
+  //   // Add start and end nodes
+  //   newNodes.push(
+  //     { id: '1', name: startEntity, color: '#3bd671' },
+  //     { id: '2', name: endEntity, color: '#ff5c6c' }
+  //   );
 
-    // Generate random nodes in a circular pattern
-    const radius = 200;
-    const angleStep = (2 * Math.PI) / 98; // For remaining 98 nodes
+  //   // Generate random nodes in a circular pattern
+  //   const radius = 200;
+  //   const angleStep = (2 * Math.PI) / 98; // For remaining 98 nodes
 
-    for (let i = 3; i <= 100; i++) {
-      const angle = angleStep * (i - 3);
-      const x = radius * Math.cos(angle);
-      const y = radius * Math.sin(angle);
+  //   for (let i = 3; i <= 100; i++) {
+  //     const angle = angleStep * (i - 3);
+  //     const x = radius * Math.cos(angle);
+  //     const y = radius * Math.sin(angle);
       
-      newNodes.push({
-        id: i.toString(),
-        name: `${Math.floor(Math.random() * 1000)}`,
-        color: '#6b5cff',
-        x, // Initial position
-        y,
-        fx: undefined, // Allow node to move
-        fy: undefined
-      });
+  //     newNodes.push({
+  //       id: i.toString(),
+  //       name: `${Math.floor(Math.random() * 1000)}`,
+  //       color: '#6b5cff',
+  //       x, // Initial position
+  //       y,
+  //       fx: undefined, // Allow node to move
+  //       fy: undefined
+  //     });
+  //   }
+
+  //   // Generate random connections, but limit the number to reduce clutter
+  //   newNodes.forEach((node) => {
+  //     const numConnections = Math.floor(Math.random() * 2) + 1; // 1 to 2 connections
+  //     const connectedNodes = new Set(); // Track already connected nodes
+
+  //     for (let i = 0; i < numConnections; i++) {
+  //       const targetId = Math.floor(Math.random() * 98) + 3; // Only connect to random nodes (3-100)
+  //       if (targetId.toString() !== node.id && !connectedNodes.has(targetId)) {
+  //         connectedNodes.add(targetId);
+  //         newLinks.push({
+  //           source: node.id,
+  //           target: targetId.toString(),
+  //           value: 1
+  //         });
+  //       }
+  //     }
+  //   });
+
+  //   // Ensure start and end nodes are connected through some path
+  //   let intermediateNodes = [
+  //     Math.floor(Math.random() * 98) + 3,
+  //     Math.floor(Math.random() * 98) + 3
+  //   ].map(n => n.toString());
+
+  //   newLinks.push(
+  //     { source: '1', target: intermediateNodes[0] },
+  //     { source: intermediateNodes[0], target: intermediateNodes[1] },
+  //     { source: intermediateNodes[1], target: '2' }
+  //   );
+
+  //   setGraphData({ nodes: newNodes, links: newLinks });
+  // };
+
+  // Cleanup WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      if (wsClient) {
+        wsClient.close();
+        setWsClient(null);
+      }
+    };
+  }, [wsClient]);
+
+  const handleSearch = async () => {
+    if (!startEntity || !endEntity) return;
+
+    // Close any existing WebSocket connection
+    if (wsClient) {
+      wsClient.close();
+      setWsClient(null);
     }
 
-    // Generate random connections, but limit the number to reduce clutter
-    newNodes.forEach((node) => {
-      const numConnections = Math.floor(Math.random() * 2) + 1; // 1 to 2 connections
-      const connectedNodes = new Set(); // Track already connected nodes
+    setLoadingSearch(true);
+    setGraphData({ nodes: [], links: [] }); // Clear existing graph
+    try {
+      // Try to find selected items in existing results lists
+      let startItem = startResults.find((r) => r.title === startEntity);
+      let endItem = endResults.find((r) => r.title === endEntity);
 
-      for (let i = 0; i < numConnections; i++) {
-        const targetId = Math.floor(Math.random() * 98) + 3; // Only connect to random nodes (3-100)
-        if (targetId.toString() !== node.id && !connectedNodes.has(targetId)) {
-          connectedNodes.add(targetId);
-          newLinks.push({
-            source: node.id,
-            target: targetId.toString(),
-            value: 1
-          });
-        }
+      // If not found, fallback to querying the server for the entity (take first match)
+      if (!startItem) {
+        const res = await searchEntities(startEntity, 1);
+        startItem = res && res.length > 0 ? res[0] : undefined;
       }
-    });
+      if (!endItem) {
+        const res = await searchEntities(endEntity, 1);
+        endItem = res && res.length > 0 ? res[0] : undefined;
+      }
 
-    // Ensure start and end nodes are connected through some path
-    let intermediateNodes = [
-      Math.floor(Math.random() * 98) + 3,
-      Math.floor(Math.random() * 98) + 3
-    ].map(n => n.toString());
+      if (!startItem || !endItem) {
+        const msg = 'Could not resolve start or end entity to an id.';
+        console.warn(msg, { startItem, endItem });
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: ${msg}`,
+          ...s,
+        ]);
+        return;
+      }
 
-    newLinks.push(
-      { source: '1', target: intermediateNodes[0] },
-      { source: intermediateNodes[0], target: intermediateNodes[1] },
-      { source: intermediateNodes[1], target: '2' }
-    );
+      // Call the backend to start relationship search using ids
+      const info = await searchRelationship(startItem.id, endItem.id);
+      console.log('searchRelationship result:', info);
+      setRelationshipInfo(info);
+      setSearchLog((s) => [
+        `${new Date().toLocaleTimeString()}: searchRelationship(${startItem!.id}, ${endItem!.id}) -> request_id=${info.request_id}`,
+        ...s,
+      ]);
 
-    setGraphData({ nodes: newNodes, links: newLinks });
+      // Create WebSocket connection using server info from the response
+      if (!info.websocket_server_info?.ip || !info.websocket_server_info?.port) {
+        const msg = 'No WebSocket server information provided in the response';
+        console.error(msg, info);
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: ${msg}`,
+          ...s,
+        ]);
+        return;
+      }
+
+      const wsUrl = `ws://${info.websocket_server_info.ip}:${info.websocket_server_info.port}/ws?request_id=${info.request_id}`;
+      const ws = new WebSocket(wsUrl);
+
+      // Add connection timeout
+      const connectionTimeout = setTimeout(() => {
+        if (ws.readyState === WebSocket.CONNECTING) {
+          console.log('WebSocket connection timeout');
+          setSearchLog((s) => [
+            `${new Date().toLocaleTimeString()}: WebSocket connection timeout - Unable to connect to ${wsUrl}`,
+            ...s,
+          ]);
+          ws.close();
+        }
+      }, 5000); // 5 second timeout
+
+      // Setup ping interval
+      const setupPingInterval = () => {
+        // Clear any existing ping timer
+        if (pingTimerRef.current) {
+          clearInterval(pingTimerRef.current);
+        }
+
+        // Start new ping timer
+        pingTimerRef.current = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+            
+            // Check if we've received a pong recently
+            const timeSinceLastPong = Date.now() - lastPongRef.current;
+            if (timeSinceLastPong > PING_INTERVAL * 2) {
+              console.warn('No pong received, connection might be dead');
+              ws.close();
+            }
+          }
+        }, PING_INTERVAL);
+      };
+
+      // Set up WebSocket event handlers
+      ws.onopen = () => {
+        clearTimeout(connectionTimeout);
+        const connectionInfo = {
+          url: wsUrl,
+          protocol: ws.protocol || 'no-protocol',
+          readyState: ws.readyState,
+          extensions: ws.extensions || 'no-extensions'
+        };
+        console.log('WebSocket connected:', connectionInfo);
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: WebSocket connected - ${JSON.stringify(connectionInfo)}`,
+          ...s,
+        ]);
+        setWsConnecting(false);
+        setWsReconnectAttempt(0);
+        setupPingInterval();
+        lastPongRef.current = Date.now(); // Reset pong timer
+        
+        // Send initial message to verify connection
+        try {
+          ws.send(JSON.stringify({ type: 'init', request_id: info.request_id }));
+        } catch (err) {
+          console.error('Error sending init message:', err);
+          setSearchLog((s) => [
+            `${new Date().toLocaleTimeString()}: Failed to send init message - ${err}`,
+            ...s,
+          ]);
+        }
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          
+          // Log all received data to search log
+          setSearchLog((s) => [
+            `${new Date().toLocaleTimeString()}: Received WebSocket data: ${JSON.stringify(data)}`,
+            ...s,
+          ]);
+          
+          // Handle pong messages
+          if (data.type === 'pong') {
+            lastPongRef.current = Date.now();
+            return;
+          }
+
+          // Handle result type messages
+          if (data.type === 'result' && data.Entities && data.Relationships) {
+            const response = data as WebSocketResponse;
+            console.log('Received relationship data:', response);
+
+            // Transform entities into nodes with required force-graph properties
+            const graphNodes = response.Entities.map((entity: Entity) => ({
+              id: entity.id,           // Use the actual entity ID
+              name: entity.name,       // Display name
+              ref_link: entity.ref_link,
+              entity_type: entity.entity_type,
+              description: entity.short_description,
+              // Add required force-graph properties
+              val: 1,                  // Node value affects size
+              x: undefined,            // Allow force-graph to position
+              y: undefined,
+              vx: 0,                  // Initial velocities
+              vy: 0,
+              fx: undefined,          // Fixed positions (if needed)
+              fy: undefined
+            }));
+
+            // Create a nodes map for quick lookup
+            const nodesById = Object.fromEntries(graphNodes.map(node => [node.id, node]));
+
+            // Transform relationships into links with object references
+            const graphLinks = response.Relationships
+              .filter((rel: Relationship) => {
+                const hasNodes = rel.entity_src in nodesById && rel.entity_dst in nodesById;
+                if (!hasNodes) {
+                  console.warn('Missing node reference for relationship:', rel);
+                }
+                return hasNodes;
+              })
+              .map((rel: Relationship) => ({
+                source: nodesById[rel.entity_src],
+                target: nodesById[rel.entity_dst],
+                type: rel.relationship_type,
+                description: rel.short_description,
+                ref_link: rel.ref_link,
+                value: 1              // Link strength
+              }));
+
+            // Color the nodes based on their role
+            const visualNodes = graphNodes.map(node => ({
+              ...node,
+              color: node.id === startItem!.id ? '#3bd671' :  // Start node
+                     node.id === endItem!.id ? '#ff5c6c' :    // End node
+                     '#6b5cff'                                // Path node
+            }));
+
+            // Update graph data with the properly formatted nodes and links
+            setGraphData({
+              nodes: visualNodes,
+              links: graphLinks
+            });
+
+            setSearchLog((s) => [
+              `${new Date().toLocaleTimeString()}: Graph updated with ${graphNodes.length} entities and ${graphLinks.length} relationships`,
+              ...s,
+            ]);
+
+            // Zoom to fit the new graph
+            if (graphRef.current) {
+              setTimeout(() => {
+                graphRef.current.zoomToFit(400);
+              }, 250);
+            }
+          }
+        } catch (err) {
+          console.error('Error processing WebSocket message:', err);
+          setSearchLog((s) => [
+            `${new Date().toLocaleTimeString()}: Error processing graph data: ${err}`,
+            ...s,
+          ]);
+        }
+      };
+
+      ws.onerror = (error) => {
+        // Get more detailed error information
+        const errorDetails = {
+          type: error.type,
+          message: (error as any).message || 'Unknown error',
+          readyState: ws.readyState,
+          url: wsUrl
+        };
+        console.error('WebSocket error:', errorDetails);
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: WebSocket error - ${JSON.stringify(errorDetails)}`,
+          ...s,
+        ]);
+      };
+
+      ws.onclose = (event) => {
+        const closeInfo = {
+          code: event.code,
+          reason: event.reason || 'No reason provided',
+          wasClean: event.wasClean,
+          readyState: ws.readyState
+        };
+        console.log('WebSocket connection closed:', closeInfo);
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: WebSocket closed - ${JSON.stringify(closeInfo)}`,
+          ...s,
+        ]);
+        setWsClient(null);
+
+        // Clear ping interval
+        if (pingTimerRef.current) {
+          clearInterval(pingTimerRef.current);
+          pingTimerRef.current = null;
+        }
+
+        // Attempt to reconnect if we haven't exceeded max attempts
+        if (wsReconnectAttempt < RECONNECT_ATTEMPTS && relationshipInfo?.request_id) {
+          const delay = INITIAL_RECONNECT_DELAY * Math.pow(2, wsReconnectAttempt);
+          console.log(`Attempting to reconnect in ${delay}ms (attempt ${wsReconnectAttempt + 1}/${RECONNECT_ATTEMPTS})`);
+          
+          setSearchLog((s) => [
+            `${new Date().toLocaleTimeString()}: Reconnecting in ${delay}ms (attempt ${wsReconnectAttempt + 1}/${RECONNECT_ATTEMPTS})`,
+            ...s,
+          ]);
+
+          setWsConnecting(true);
+          setTimeout(() => {
+            if (wsReconnectAttempt < RECONNECT_ATTEMPTS) {
+              setWsReconnectAttempt(prev => prev + 1);
+              handleSearch(); // Retry the connection
+            } else {
+              setWsConnecting(false);
+              setSearchLog((s) => [
+                `${new Date().toLocaleTimeString()}: Failed to reconnect after ${RECONNECT_ATTEMPTS} attempts`,
+                ...s,
+              ]);
+            }
+          }, delay);
+        }
+      };
+
+      setWsClient(ws);
+
+    } catch (err: any) {
+      console.error('Error during handleSearch:', err);
+      setSearchLog((s) => [
+        `${new Date().toLocaleTimeString()}: Error: ${err?.message || String(err)}`,
+        ...s,
+      ]);
+    } finally {
+      setLoadingSearch(false);
+    }
   };
 
   useEffect(() => {
@@ -180,6 +552,21 @@ export default function Home() {
     const timeoutId = setTimeout(searchEnd, 300);
     return () => clearTimeout(timeoutId);
   }, [endEntity]);
+
+  // useEffect(() => {
+  //   if (!id1 || !id2) return;
+
+  //   const fetchRelationship = async () => {
+  //     try {
+  //       const data = await searchRelationship(id1, id2);
+  //       console.log("Relationship data:", data);
+  //     } catch (err: any) {
+  //       console.error("Error fetching relationship:", err);
+  //     }
+  //   };
+
+  //   fetchRelationship();
+  // }, [id1, id2]);
 
   return (
     <main style={{ minHeight: "100vh", width: "100%" }}>
@@ -397,20 +784,22 @@ export default function Home() {
                 <div style={{ flex: 1 }} />
                   <Button 
                     onClick={handleSearch}
+                    disabled={loadingSearch}
                     style={{ 
                       width: "100%", 
                       height: 40, 
-                      background: borderColor, 
+                      background: loadingSearch ? 'rgba(40, 204, 212, 0.5)' : borderColor, 
                       borderRadius: 8, 
                       border: `1px solid ${borderColor}`, 
                       color: textColor, 
-                      cursor: "pointer", 
+                      cursor: loadingSearch ? "not-allowed" : "pointer", 
                       fontSize: 14, 
                       fontWeight: 500, 
-                      transition: "all 0.2s ease" 
+                      transition: "all 0.2s ease",
+                      opacity: loadingSearch ? 0.7 : 1
                     }}
                   >
-                    Search
+                    {loadingSearch ? 'Searching...' : 'Search'}
                   </Button>
               </div>
             </Rectangle>
@@ -428,8 +817,26 @@ export default function Home() {
               <div style={{ width: "100%", height: "100%", color: borderColor, display: "flex", flexDirection: "column", alignItems: "flex-start", padding: 18, boxSizing: "border-box" }}>
                 <h3 style={{ margin: 0, fontSize: 18 , color: textColor}}>Search Log</h3>
                 <div style={{ height: 12 }} />
-                <div style={{ width: "100%", height: "92%", borderRadius: 8, border: `1px solid ${borderColor}`, display: "flex", alignItems: "center", justifyContent: "center", color: textColor }}>
-                  No search activity yet
+                <div style={{ width: "100%", height: "92%", borderRadius: 8, border: `1px solid ${borderColor}`, display: "flex", alignItems: "flex-start", justifyContent: "flex-start", color: textColor, padding: 12, boxSizing: 'border-box', overflow: 'auto' }}>
+                  {searchLog.length === 0 ? (
+                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>No search activity yet</div>
+                  ) : (
+                    <div style={{ width: '100%' }}>
+                      <ul style={{ margin: 0, paddingLeft: 14 }}>
+                        {searchLog.map((entry, idx) => (
+                          <li key={idx} style={{ marginBottom: 6, fontSize: 13, color: 'rgba(255,255,255,0.9)' }}>{entry}</li>
+                        ))}
+                      </ul>
+
+                      {relationshipInfo && (
+                        <div style={{ marginTop: 8, fontSize: 12, color: 'rgba(255,255,255,0.8)' }}>
+                          <div><strong>Request ID:</strong> {relationshipInfo.request_id}</div>
+                          <div><strong>Websocket:</strong> {relationshipInfo.websocket_server_info?.ip}:{relationshipInfo.websocket_server_info?.port}</div>
+                          <div><strong>Status:</strong> {relationshipInfo.status}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </Rectangle>
@@ -473,8 +880,11 @@ export default function Home() {
                       ref={graphRef}
                       graphData={graphData}
                       nodeLabel="name"
+                      nodeVal={(node: GraphNode) => node.val || 1}
                       nodeColor={(node: GraphNode) => node.color || '#fff'}
                       linkColor={(link: GraphLink) => {
+                        // Make custom-created links highly visible
+                        if ((link as any).type === 'custom') return '#ffeb3b';
                         if (
                           selectedLink &&
                           ((selectedLink.source === link.source && selectedLink.target === link.target) ||
@@ -489,10 +899,12 @@ export default function Home() {
                         ) {
                           return '#fff';
                         }
-                        return 'rgba(40, 204, 212, 0.1)';
+                        return 'rgba(40, 204, 212, 0.5)';
                       }}
                       nodeRelSize={7}
                       linkWidth={(link: GraphLink) => {
+                        // Make custom-created links thicker for visibility
+                        if ((link as any).type === 'custom') return 6;
                         if (
                           selectedLink &&
                           ((selectedLink.source === link.source && selectedLink.target === link.target) ||
@@ -523,22 +935,91 @@ export default function Home() {
                       }}
                       cooldownTicks={100}
                       warmupTicks={50}
-                      nodeCanvasObject={(node: any, ctx: any, globalScale: number) => {
-                        // Draw circle
-                        ctx.beginPath();
-                        ctx.arc(node.x, node.y, 7, 0, 2 * Math.PI, false);
-                        ctx.fillStyle = node.color || '#6b5cff';
-                        ctx.shadowColor = node.color || '#6b5cff';
-                        ctx.shadowBlur = 2;
-                        ctx.fill();
-                        ctx.shadowBlur = 0;
-                        // Optionally, draw label inside the circle
-                        ctx.font = `${9/globalScale}px Sans-Serif`;
-                        ctx.textAlign = 'center';
-                        ctx.textBaseline = 'middle';
-                        ctx.fillStyle = '#fff';
-                        ctx.fillText(node.name, node.x, node.y);
+                      onNodeClick={(node: GraphNode) => {
+                        console.log('Clicked node:', node);
+                        if (!isCreatingLink) {
+                          // begin link creation
+                          setSelectedNode(node);
+                          setIsCreatingLink(true);
+                          setSearchLog((s) => [
+                            `${new Date().toLocaleTimeString()}: Selected ${node.name}. Click another node to create a connection.`,
+                            ...s,
+                          ]);
+                        } else {
+                          // finish link creation if clicked different node
+                          if (selectedNode && selectedNode.id !== node.id) {
+                            const newLink: GraphLink = {
+                              source: selectedNode,
+                              target: node,
+                              type: 'custom',
+                              description: `Connection from ${selectedNode.name} to ${node.name}`,
+                              ref_link: '',
+                              value: 1
+                            };
+                            setGraphData(prev => {
+                              const updated = { nodes: prev.nodes, links: [...prev.links, newLink] };
+                              console.log('Graph updated (after adding link):', updated);
+                              return updated;
+                            });
+                            setSearchLog((s) => [
+                              `${new Date().toLocaleTimeString()}: Created connection from ${selectedNode.name} to ${node.name}`,
+                              ...s,
+                            ]);
+                            // Re-heat and refresh the simulation so the new link is rendered immediately
+                            setTimeout(() => {
+                              try {
+                                graphRef.current?.d3ReheatSimulation?.();
+                                graphRef.current?.refresh?.();
+                                // optional: zoomToFit to show the new connection
+                                // graphRef.current?.zoomToFit?.(400);
+                              } catch (e) {
+                                // ignore if methods aren't available
+                              }
+                            }, 50);
+                          }
+                          setSelectedNode(null);
+                          setIsCreatingLink(false);
+                        }
                       }}
+                      onNodeRightClick={(node: GraphNode) => {
+                        // cancel link creation on right click
+                        if (isCreatingLink) {
+                          setSelectedNode(null);
+                          setIsCreatingLink(false);
+                          setSearchLog((s) => [
+                            `${new Date().toLocaleTimeString()}: Cancelled link creation`,
+                            ...s,
+                          ]);
+                        }
+                        return false;
+                      }}
+                      nodeCanvasObject={(node: GraphNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                        const label = node.name;
+                        const fontSize = 12 / Math.max(globalScale, 0.1);
+                        ctx.font = `${fontSize}px Sans-Serif`;
+
+                        // draw node circle
+                        ctx.beginPath();
+                        ctx.arc(node.x || 0, node.y || 0, 5, 0, 2 * Math.PI);
+                        ctx.fillStyle = node.color || '#fff';
+                        ctx.fill();
+
+                        // highlight selected node during creation
+                        if (isCreatingLink && selectedNode?.id === node.id) {
+                          ctx.beginPath();
+                          ctx.arc(node.x || 0, node.y || 0, 9, 0, 2 * Math.PI);
+                          ctx.strokeStyle = '#00ff00';
+                          ctx.lineWidth = 2 / Math.max(globalScale, 0.1);
+                          ctx.stroke();
+                        }
+
+                        // draw label
+                        ctx.fillStyle = '#fff';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'top';
+                        ctx.fillText(label, node.x || 0, (node.y || 0) + 6);
+                      }}
+                      
                       onLinkHover={(link: GraphLink | null) => {
                         setHoveredLink(link);
                         if (!link) setSelectedLink(null);
