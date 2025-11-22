@@ -12,18 +12,19 @@ export async function GET(req: Request) {
     );
   }
 
-  const backend = process.env.NEXT_PUBLIC_BACKEND_URL2 || "http://localhost:8080";
+  const backend = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
   const url = `${backend}/api/v1/srp/search?entity_one=${encodeURIComponent(id1)}&entity_two=${encodeURIComponent(id2)}`;
 
   try {
     const res = await fetch(url);
-    const data = await res.json();
+    const body = await res.json();
 
-    // ✅ Print data for debugging
-    console.log("📦 Backend response:", JSON.stringify(data, null, 2));
+    console.log("📦 Backend response:", JSON.stringify(body, null, 2));
 
-    // Forward status code from backend
-    return NextResponse.json(data, { status: res.status });
+    // Extract only "data" field
+    const extracted = body.data;
+
+    return NextResponse.json(extracted, { status: res.status });
   } catch (err: any) {
     console.error("❌ Proxy error:", err);
     return NextResponse.json(
@@ -34,4 +35,5 @@ export async function GET(req: Request) {
       { status: 500 }
     );
   }
+
 }
