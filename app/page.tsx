@@ -248,200 +248,277 @@ const handleSearch = async () => {
   setGraphData({ nodes: [], links: [] }); // Clear existing graph
 
   try {
+    // Generate 50 random nodes with random number titles
+    const newNodes: GraphNode[] = [];
+    const newLinks: GraphLink[] = [];
+
+    // Add start and end nodes
+    const startNode: GraphNode = {
+      id: 'start',
+      name: startEntity,
+      ref_link: '',
+      entity_type: 'entity',
+      description: 'Start node',
+      color: '#3bd671',
+      val: 1,
+      x: undefined,
+      y: undefined,
+      vx: 0,
+      vy: 0,
+      fx: undefined,
+      fy: undefined,
+    };
+
+    const endNode: GraphNode = {
+      id: 'end',
+      name: endEntity,
+      ref_link: '',
+      entity_type: 'entity',
+      description: 'End node',
+      color: '#ff5c6c',
+      val: 1,
+      x: undefined,
+      y: undefined,
+      vx: 0,
+      vy: 0,
+      fx: undefined,
+      fy: undefined,
+    };
+
+    newNodes.push(startNode, endNode);
+
+    // Generate 50 random nodes with random number titles
+    for (let i = 0; i < 50; i++) {
+      newNodes.push({
+        id: `node-${i}`,
+        name: `${Math.floor(Math.random() * 10000)}`,
+        ref_link: '',
+        entity_type: 'entity',
+        description: 'Random node',
+        color: '#6b5cff',
+        val: 1,
+        x: undefined,
+        y: undefined,
+        vx: 0,
+        vy: 0,
+        fx: undefined,
+        fy: undefined,
+      });
+    }
+
+    // Create random connections between nodes
+    for (let i = 0; i < 100; i++) {
+      const sourceIdx = Math.floor(Math.random() * newNodes.length);
+      const targetIdx = Math.floor(Math.random() * newNodes.length);
+
+      if (sourceIdx !== targetIdx) {
+        newLinks.push({
+          source: newNodes[sourceIdx],
+          target: newNodes[targetIdx],
+          type: 'random',
+          description: `Connection from ${newNodes[sourceIdx].name} to ${newNodes[targetIdx].name}`,
+          ref_link: '',
+          value: 1,
+        });
+      }
+    }
+
+    // Ensure start and end nodes are connected
+    newLinks.push({
+      source: startNode,
+      target: newNodes[2],
+      type: 'path',
+      description: 'Path connection',
+      ref_link: '',
+      value: 1,
+    });
+
+    newLinks.push({
+      source: newNodes[newNodes.length - 1],
+      target: endNode,
+      type: 'path',
+      description: 'Path connection',
+      ref_link: '',
+      value: 1,
+    });
+
+    // Display random graph immediately
+    setGraphData({
+      nodes: newNodes,
+      links: newLinks,
+    });
+
+    setSearchLog((s) => [
+      `${new Date().toLocaleTimeString()}: Generated random graph with ${newNodes.length} nodes and ${newLinks.length} connections`,
+      ...s,
+    ]);
+
+    // Zoom to fit the new graph
+    if (graphRef.current) {
+      setTimeout(() => {
+        graphRef.current.zoomToFit(400);
+      }, 250);
+    }
+
     // Try to find selected items in existing results lists
     let startItem = startResults.find((r) => r.title === startEntity);
     let endItem = endResults.find((r) => r.title === endEntity);
 
-    // If not found, fallback to querying the server for the entity (take first match)
-    if (!startItem) {
-      return;
-
-    }
-    if (!endItem) {
-      return;
-
-    }
-
-    // Call the backend to start relationship search using ids
-    const info = await searchRelationship(startItem.id, endItem.id);
-    console.log('searchRelationship result:', info);
-    setRelationshipInfo(info);
-    setSearchLog((s) => [
-      `${new Date().toLocaleTimeString()}: searchRelationship(${startItem!.id}, ${endItem!.id}) -> request_id=${info.request_id}`,
-      ...s,
-    ]);
-
-    // Create WebSocket connection using server info from the response
-    if (!info.websocket_server_info?.ip || !info.websocket_server_info?.port) {
-      const msg = 'No WebSocket server information provided in the response';
-      console.error(msg, info);
-      setSearchLog((s) => [`${new Date().toLocaleTimeString()}: ${msg}`, ...s]);
-      return;
-    }
-
-    const wsUrl = `ws://${info.websocket_server_info.ip}:${info.websocket_server_info.port}/ws?request_id=${info.request_id}`;
-    const ws = new WebSocket(wsUrl);
-
-    // Add connection timeout
-    const connectionTimeout = setTimeout(() => {
-      if (ws.readyState === WebSocket.CONNECTING) {
-        console.log('WebSocket connection timeout');
-        setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: WebSocket connection timeout - Unable to connect to ${wsUrl}`,
-          ...s,
-        ]);
-        ws.close();
-      }
-    }, 5000); // 5 second timeout
-
-    // Set up WebSocket event handlers
-    ws.onopen = () => {
-      clearTimeout(connectionTimeout);
-      const connectionInfo = {
-        url: wsUrl,
-        protocol: ws.protocol || 'no-protocol',
-        readyState: ws.readyState,
-        extensions: ws.extensions || 'no-extensions',
-      };
-      console.log('WebSocket connected:', connectionInfo);
-      setSearchLog((s) => [
-        `${new Date().toLocaleTimeString()}: WebSocket connected - ${JSON.stringify(connectionInfo)}`,
-        ...s,
-      ]);
-      setWsConnecting(false);
-      setWsReconnectAttempt(0);
-      lastPongRef.current = Date.now(); // Reset pong timer
-
-      // Send initial message to verify connection
+    // If both items found, attempt WebSocket connection (optional, non-blocking)
+    if (startItem && endItem) {
       try {
-        ws.send(JSON.stringify({ type: 'init', request_id: info.request_id }));
-      } catch (err) {
-        console.error('Error sending init message:', err);
+        // Call the backend to start relationship search using ids
+        const info = await searchRelationship(startItem.id, endItem.id);
+        console.log('searchRelationship result:', info);
+        setRelationshipInfo(info);
         setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: Failed to send init message - ${err}`,
+          `${new Date().toLocaleTimeString()}: Attempting WebSocket connection for real data...`,
+          ...s,
+        ]);
+
+        // Create WebSocket connection using server info from the response
+        if (info.websocket_server_info?.ip && info.websocket_server_info?.port) {
+          const wsUrl = `ws://${info.websocket_server_info.ip}:${info.websocket_server_info.port}/ws?request_id=${info.request_id}`;
+          const ws = new WebSocket(wsUrl);
+
+          // Add connection timeout
+          const connectionTimeout = setTimeout(() => {
+            if (ws.readyState === WebSocket.CONNECTING) {
+              console.log('WebSocket connection timeout');
+              setSearchLog((s) => [
+                `${new Date().toLocaleTimeString()}: WebSocket connection timeout - keeping random graph`,
+                ...s,
+              ]);
+              ws.close();
+            }
+          }, 5000); // 5 second timeout
+
+          // Set up WebSocket event handlers
+          ws.onopen = () => {
+            clearTimeout(connectionTimeout);
+            console.log('WebSocket connected, requesting real data...');
+            setSearchLog((s) => [
+              `${new Date().toLocaleTimeString()}: WebSocket connected - fetching real relationship data`,
+              ...s,
+            ]);
+            setWsConnecting(false);
+            setWsReconnectAttempt(0);
+            lastPongRef.current = Date.now();
+
+            // Send initial message to verify connection
+            try {
+              ws.send(JSON.stringify({ type: 'init', request_id: info.request_id }));
+            } catch (err) {
+              console.error('Error sending init message:', err);
+            }
+          };
+
+          ws.onmessage = (event) => {
+            try {
+              const data = JSON.parse(event.data);
+
+              // Handle pong messages
+              if (data.type === 'pong') {
+                lastPongRef.current = Date.now();
+                return;
+              }
+
+              // Handle result type messages - replace random graph with real data
+              if (data.type === 'result' && data.Entities && data.Relationships) {
+                const response = data as WebSocketResponse;
+                console.log('Received relationship data:', response);
+
+                // Transform entities into nodes
+                const graphNodes = response.Entities.map((entity: Entity) => ({
+                  id: entity.id,
+                  name: entity.name,
+                  ref_link: entity.ref_link,
+                  entity_type: entity.entity_type,
+                  description: entity.short_description,
+                  val: 1,
+                  x: undefined,
+                  y: undefined,
+                  vx: 0,
+                  vy: 0,
+                  fx: undefined,
+                  fy: undefined,
+                }));
+
+                const nodesById = Object.fromEntries(graphNodes.map((node) => [node.id, node]));
+
+                const graphLinks = response.Relationships.filter(
+                  (rel: Relationship) => rel.entity_src in nodesById && rel.entity_dst in nodesById
+                ).map((rel: Relationship) => ({
+                  source: nodesById[rel.entity_src],
+                  target: nodesById[rel.entity_dst],
+                  type: rel.relationship_type,
+                  description: rel.short_description,
+                  ref_link: rel.ref_link,
+                  value: 1,
+                }));
+
+                // Color the nodes based on their role
+                const visualNodes = graphNodes.map((node) => ({
+                  ...node,
+                  color:
+                    node.id === startItem!.id
+                      ? '#3bd671'
+                      : node.id === endItem!.id
+                      ? '#ff5c6c'
+                      : '#6b5cff',
+                }));
+
+                setGraphData({
+                  nodes: visualNodes,
+                  links: graphLinks,
+                });
+
+                setSearchLog((s) => [
+                  `${new Date().toLocaleTimeString()}: Graph replaced with real data - ${graphNodes.length} entities and ${graphLinks.length} relationships`,
+                  ...s,
+                ]);
+
+                // Zoom to fit the new graph
+                if (graphRef.current) {
+                  setTimeout(() => {
+                    graphRef.current.zoomToFit(400);
+                  }, 250);
+                }
+              }
+            } catch (err) {
+              console.error('Error processing WebSocket message:', err);
+            }
+          };
+
+          ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+            setSearchLog((s) => [
+              `${new Date().toLocaleTimeString()}: WebSocket error - keeping random graph`,
+              ...s,
+            ]);
+          };
+
+          ws.onclose = () => {
+            console.log('WebSocket connection closed');
+            setWsClient(null);
+            setWsConnecting(false);
+          };
+
+          setWsClient(ws);
+        }
+      } catch (err: any) {
+        console.error('Error attempting WebSocket connection:', err);
+        setSearchLog((s) => [
+          `${new Date().toLocaleTimeString()}: WebSocket connection failed - using random graph`,
           ...s,
         ]);
       }
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        // Log all received data to search log
-        setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: Received WebSocket data: ${JSON.stringify(data)}`,
-          ...s,
-        ]);
-
-        // Handle pong messages (optional, just reset timestamp)
-        if (data.type === 'pong') {
-          lastPongRef.current = Date.now();
-          return;
-        }
-
-        // Handle result type messages
-        if (data.type === 'result' && data.Entities && data.Relationships) {
-          const response = data as WebSocketResponse;
-          console.log('Received relationship data:', response);
-
-          // Transform entities into nodes
-          const graphNodes = response.Entities.map((entity: Entity) => ({
-            id: entity.id,
-            name: entity.name,
-            ref_link: entity.ref_link,
-            entity_type: entity.entity_type,
-            description: entity.short_description,
-            val: 1,
-            x: undefined,
-            y: undefined,
-            vx: 0,
-            vy: 0,
-            fx: undefined,
-            fy: undefined,
-          }));
-
-          const nodesById = Object.fromEntries(graphNodes.map((node) => [node.id, node]));
-
-          const graphLinks = response.Relationships.filter(
-            (rel: Relationship) => rel.entity_src in nodesById && rel.entity_dst in nodesById
-          ).map((rel: Relationship) => ({
-            source: nodesById[rel.entity_src],
-            target: nodesById[rel.entity_dst],
-            type: rel.relationship_type,
-            description: rel.short_description,
-            ref_link: rel.ref_link,
-            value: 1,
-          }));
-
-          // Color the nodes based on their role
-          const visualNodes = graphNodes.map((node) => ({
-            ...node,
-            color:
-              node.id === startItem!.id
-                ? '#3bd671'
-                : node.id === endItem!.id
-                ? '#ff5c6c'
-                : '#6b5cff',
-          }));
-
-          setGraphData({
-            nodes: visualNodes,
-            links: graphLinks,
-          });
-
-          setSearchLog((s) => [
-            `${new Date().toLocaleTimeString()}: Graph updated with ${graphNodes.length} entities and ${graphLinks.length} relationships`,
-            ...s,
-          ]);
-
-          // Zoom to fit the new graph
-          if (graphRef.current) {
-            setTimeout(() => {
-              graphRef.current.zoomToFit(400);
-            }, 250);
-          }
-        }
-      } catch (err) {
-        console.error('Error processing WebSocket message:', err);
-        setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: Error processing graph data: ${err}`,
-          ...s,
-        ]);
-      }
-    };
-
-    ws.onerror = (error) => {
-      const errorDetails = {
-        type: error.type,
-        message: (error as any).message || 'Unknown error',
-        readyState: ws.readyState,
-        url: wsUrl,
-      };
-      console.error('WebSocket error:', errorDetails);
+    } else {
       setSearchLog((s) => [
-        `${new Date().toLocaleTimeString()}: WebSocket error - ${JSON.stringify(errorDetails)}`,
+        `${new Date().toLocaleTimeString()}: No matching items in search results - using random graph only`,
         ...s,
       ]);
-    };
-
-    ws.onclose = (event) => {
-      const closeInfo = {
-        code: event.code,
-        reason: event.reason || 'No reason provided',
-        wasClean: event.wasClean,
-        readyState: ws.readyState,
-      };
-      console.log('WebSocket connection closed:', closeInfo);
-      setSearchLog((s) => [
-        `${new Date().toLocaleTimeString()}: WebSocket closed - ${JSON.stringify(closeInfo)}`,
-        ...s,
-      ]);
-      setWsClient(null);
-      setWsConnecting(false);
-    };
-
-    setWsClient(ws);
+    }
   } catch (err: any) {
     console.error('Error during handleSearch:', err);
     setSearchLog((s) => [
