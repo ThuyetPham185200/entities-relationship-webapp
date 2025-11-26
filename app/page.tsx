@@ -50,8 +50,8 @@ interface GraphNode {
 }
 
 interface GraphLink {
-  source: GraphNode;  // Changed to use node objects instead of strings
-  target: GraphNode;
+  source: GraphNode | string;  // Can be node object or ID string
+  target: GraphNode | string;  // Can be node object or ID string
   type: string;
   description: string;
   ref_link: string;
@@ -248,123 +248,11 @@ const handleSearch = async () => {
   setGraphData({ nodes: [], links: [] }); // Clear existing graph
 
   try {
-    // Generate 50 random nodes with random number titles
-    const newNodes: GraphNode[] = [];
-    const newLinks: GraphLink[] = [];
-
-    // Add start and end nodes
-    const startNode: GraphNode = {
-      id: 'start',
-      name: startEntity,
-      ref_link: '',
-      entity_type: 'entity',
-      description: 'Start node',
-      color: '#3bd671',
-      val: 1,
-      x: undefined,
-      y: undefined,
-      vx: 0,
-      vy: 0,
-      fx: undefined,
-      fy: undefined,
-    };
-
-    const endNode: GraphNode = {
-      id: 'end',
-      name: endEntity,
-      ref_link: '',
-      entity_type: 'entity',
-      description: 'End node',
-      color: '#ff5c6c',
-      val: 1,
-      x: undefined,
-      y: undefined,
-      vx: 0,
-      vy: 0,
-      fx: undefined,
-      fy: undefined,
-    };
-
-    newNodes.push(startNode, endNode);
-
-    // Generate 50 random nodes with random number titles
-    for (let i = 0; i < 50; i++) {
-      newNodes.push({
-        id: `node-${i}`,
-        name: `${Math.floor(Math.random() * 10000)}`,
-        ref_link: '',
-        entity_type: 'entity',
-        description: 'Random node',
-        color: '#6b5cff',
-        val: 1,
-        x: undefined,
-        y: undefined,
-        vx: 0,
-        vy: 0,
-        fx: undefined,
-        fy: undefined,
-      });
-    }
-
-    // Create random connections between nodes
-    for (let i = 0; i < 100; i++) {
-      const sourceIdx = Math.floor(Math.random() * newNodes.length);
-      const targetIdx = Math.floor(Math.random() * newNodes.length);
-
-      if (sourceIdx !== targetIdx) {
-        newLinks.push({
-          source: newNodes[sourceIdx],
-          target: newNodes[targetIdx],
-          type: 'random',
-          description: `Connection from ${newNodes[sourceIdx].name} to ${newNodes[targetIdx].name}`,
-          ref_link: '',
-          value: 1,
-        });
-      }
-    }
-
-    // Ensure start and end nodes are connected
-    newLinks.push({
-      source: startNode,
-      target: newNodes[2],
-      type: 'path',
-      description: 'Path connection',
-      ref_link: '',
-      value: 1,
-    });
-
-    newLinks.push({
-      source: newNodes[newNodes.length - 1],
-      target: endNode,
-      type: 'path',
-      description: 'Path connection',
-      ref_link: '',
-      value: 1,
-    });
-
-    // Display random graph immediately
-    setGraphData({
-      nodes: newNodes,
-      links: newLinks,
-    });
-
-    setSearchLog((s) => [
-      `${new Date().toLocaleTimeString()}: Generated random graph with ${newNodes.length} nodes and ${newLinks.length} connections`,
-      ...s,
-    ]);
-
-    // Zoom to fit the new graph
-    if (graphRef.current) {
-      setTimeout(() => {
-        graphRef.current.zoomToFit(400);
-      }, 250);
-    }
-
     // Try to find selected items in existing results lists
     let startItem = startResults.find((r) => r.title === startEntity);
     let endItem = endResults.find((r) => r.title === endEntity);
 
-    // If both items found, attempt WebSocket connection (optional, non-blocking)
+    // If both items found, attempt WebSocket connection
     if (startItem && endItem) {
       try {
         // Call the backend to start relationship search using ids
@@ -416,6 +304,14 @@ const handleSearch = async () => {
           ws.onmessage = (event) => {
             try {
               const data = JSON.parse(event.data);
+              console.log('WebSocket data received:', data);
+              console.log('Data JSON:', JSON.stringify(data, null, 2));
+
+              // Log to search log as well
+              setSearchLog((s) => [
+                `${new Date().toLocaleTimeString()}: WebSocket data: ${JSON.stringify(data)}`,
+                ...s,
+              ]);
 
               // Handle pong messages
               if (data.type === 'pong') {
@@ -425,64 +321,119 @@ const handleSearch = async () => {
 
               // Handle result type messages - replace random graph with real data
               if (data.type === 'result' && data.Entities && data.Relationships) {
-                const response = data as WebSocketResponse;
-                console.log('Received relationship data:', response);
+                try {
+                  const response = data as WebSocketResponse;
+                  console.log('Received relationship data:', response);
 
-                // Transform entities into nodes
-                const graphNodes = response.Entities.map((entity: Entity) => ({
-                  id: entity.id,
-                  name: entity.name,
-                  ref_link: entity.ref_link,
-                  entity_type: entity.entity_type,
-                  description: entity.short_description,
-                  val: 1,
-                  x: undefined,
-                  y: undefined,
-                  vx: 0,
-                  vy: 0,
-                  fx: undefined,
-                  fy: undefined,
-                }));
+                  // Transform entities into nodes
+                  const graphNodes = response.Entities.map((entity: Entity) => ({
+                    id: entity.id,
+                    name: entity.name,
+                    ref_link: entity.ref_link,
+                    entity_type: entity.entity_type,
+                    description: entity.short_description,
+                    val: 1,
+                    x: undefined,
+                    y: undefined,
+                    vx: 0,
+                    vy: 0,
+                    fx: undefined,
+                    fy: undefined,
+                  }));
 
-                const nodesById = Object.fromEntries(graphNodes.map((node) => [node.id, node]));
+                  const nodesById = Object.fromEntries(graphNodes.map((node) => [node.id, node]));
+                  console.log('Nodes by ID:', nodesById);
 
-                const graphLinks = response.Relationships.filter(
-                  (rel: Relationship) => rel.entity_src in nodesById && rel.entity_dst in nodesById
-                ).map((rel: Relationship) => ({
-                  source: nodesById[rel.entity_src],
-                  target: nodesById[rel.entity_dst],
-                  type: rel.relationship_type,
-                  description: rel.short_description,
-                  ref_link: rel.ref_link,
-                  value: 1,
-                }));
+                  // Build relationships by matching entity_src and entity_dst IDs with node IDs
+                  console.log('Building relationships from:', response.Relationships);
+                  const graphLinks = response.Relationships
+                    .filter((rel: Relationship) => {
+                      const srcExists = rel.entity_src in nodesById;
+                      const dstExists = rel.entity_dst in nodesById;
+                      console.log(`Relationship ${rel.entity_src} -> ${rel.entity_dst}: src=${srcExists}, dst=${dstExists}`);
+                      return srcExists && dstExists;
+                    })
+                    .map((rel: Relationship) => ({
+                      source: rel.entity_src,  // Use ID string, not node object
+                      target: rel.entity_dst,  // Use ID string, not node object
+                      type: rel.relationship_type || 'connection',
+                      description: rel.short_description || `${nodesById[rel.entity_src].name} → ${nodesById[rel.entity_dst].name}`,
+                      ref_link: rel.ref_link,
+                      value: 1,
+                    }));
 
-                // Color the nodes based on their role
-                const visualNodes = graphNodes.map((node) => ({
-                  ...node,
-                  color:
-                    node.id === startItem!.id
-                      ? '#3bd671'
-                      : node.id === endItem!.id
-                      ? '#ff5c6c'
-                      : '#6b5cff',
-                }));
+                  console.log('Graph nodes:', graphNodes);
+                  console.log('Graph links count:', graphLinks.length);
+                  console.log('Graph links:', graphLinks);
 
-                setGraphData({
-                  nodes: visualNodes,
-                  links: graphLinks,
-                });
+                  if (graphLinks.length === 0) {
+                    setSearchLog((s) => [
+                      `${new Date().toLocaleTimeString()}: WARNING - No valid relationships found! Check IDs matching`,
+                      ...s,
+                    ]);
+                  }
 
-                setSearchLog((s) => [
-                  `${new Date().toLocaleTimeString()}: Graph replaced with real data - ${graphNodes.length} entities and ${graphLinks.length} relationships`,
-                  ...s,
-                ]);
+                  // Color the nodes: start entity green, end entity red, others purple
+                  // Determine which nodes are in the path by tracing relationships
+                  const startEntity = graphNodes[0];
+                  const endEntity = graphNodes[graphNodes.length - 1];
+                  
+                  // Build a map to trace the path from start to end
+                  const pathNodeIds = new Set<string>();
+                  pathNodeIds.add(startEntity.id);
+                  pathNodeIds.add(endEntity.id);
 
-                // Zoom to fit the new graph
-                if (graphRef.current) {
-                  setTimeout(() => {
-                    graphRef.current.zoomToFit(400);
-                  }, 250);
+                  // Trace forward from start node through relationships
+                  let currentId = startEntity.id;
+                  const visited = new Set<string>();
+                  
+                  while (currentId !== endEntity.id && !visited.has(currentId)) {
+                    visited.add(currentId);
+                    // Find the next node in the path
+                    const nextRel = response.Relationships.find(
+                      (rel: Relationship) => rel.entity_src === currentId
+                    );
+                    if (nextRel) {
+                      pathNodeIds.add(nextRel.entity_dst);
+                      currentId = nextRel.entity_dst;
+                    } else {
+                      break;
+                    }
+                  }
+
+                  const visualNodes = graphNodes.map((node) => ({
+                    ...node,
+                    color: pathNodeIds.has(node.id) ? 
+                      (node.id === startEntity.id ? '#3bd671' : node.id === endEntity.id ? '#ff5c6c' : '#6b5cff')
+                      : '#666666', // Nodes not in path get gray color
+                  }));
+
+                  console.log('Path node IDs:', pathNodeIds);
+                  console.log('Visual nodes with colors:', visualNodes);
+
+                  setGraphData({
+                    nodes: visualNodes,
+                    links: graphLinks,
+                  });
+
+                  setSearchLog((s) => [
+                    `${new Date().toLocaleTimeString()}: Graph replaced with real data - ${graphNodes.length} entities and ${graphLinks.length} relationships`,
+                    `Link details: ${graphLinks.map(l => `${(l.source as any).name || (l.source as any).id} -> ${(l.target as any).name || (l.target as any).id}`).join(', ')}`,
+                    ...s,
+                  ]);
+
+                  // Zoom to fit the new graph
+                  if (graphRef.current) {
+                    setTimeout(() => {
+                      graphRef.current.zoomToFit(400);
+                    }, 250);
+                  }
+                } catch (err) {
+                  console.error('Error building graph from WebSocket data:', err);
+                  setSearchLog((s) => [
+                    `${new Date().toLocaleTimeString()}: ERROR building graph - ${String(err)}`,
+                    ...s,
+                  ]);
                 }
               }
             } catch (err) {
@@ -509,13 +460,13 @@ const handleSearch = async () => {
       } catch (err: any) {
         console.error('Error attempting WebSocket connection:', err);
         setSearchLog((s) => [
-          `${new Date().toLocaleTimeString()}: WebSocket connection failed - using random graph`,
+          `${new Date().toLocaleTimeString()}: WebSocket connection failed - ${String(err)}`,
           ...s,
         ]);
       }
     } else {
       setSearchLog((s) => [
-        `${new Date().toLocaleTimeString()}: No matching items in search results - using random graph only`,
+        `${new Date().toLocaleTimeString()}: Please select valid entities from search results`,
         ...s,
       ]);
     }
@@ -890,6 +841,8 @@ const handleSearch = async () => {
                       linkColor={(link: GraphLink) => {
                         // Make custom-created links highly visible
                         if ((link as any).type === 'custom') return '#ffeb3b';
+                        // Make all relationship links visible
+                        if (link.type === 'connection' || link.type === '') return 'rgba(40, 204, 212, 0.8)';
                         if (
                           selectedLink &&
                           ((selectedLink.source === link.source && selectedLink.target === link.target) ||
@@ -910,6 +863,8 @@ const handleSearch = async () => {
                       linkWidth={(link: GraphLink) => {
                         // Make custom-created links thicker for visibility
                         if ((link as any).type === 'custom') return 6;
+                        // Make all relationship links visible with good thickness
+                        if (link.type === 'connection' || link.type === '') return 4;
                         if (
                           selectedLink &&
                           ((selectedLink.source === link.source && selectedLink.target === link.target) ||
@@ -930,13 +885,18 @@ const handleSearch = async () => {
                       width={graphSize.width}
                       height={graphSize.height}
                       onEngineStop={() => {
-                        console.log("Engine stopped, nodes:", graphData.nodes.length);
+                        console.log("Engine stopped, nodes:", graphData.nodes.length, "links:", graphData.links.length);
+                        console.log("Current graph links:", graphData.links);
                         if (graphRef.current) {
                           graphRef.current.zoomToFit(400);
                         }
                       }}
                       onEngineStart={() => {
                         console.log("Engine started with data:", graphData);
+                        console.log("Engine started - nodes:", graphData.nodes.length, "links:", graphData.links.length);
+                        if (graphData.links.length > 0) {
+                          console.log("First link:", graphData.links[0]);
+                        }
                       }}
                       cooldownTicks={100}
                       warmupTicks={50}
